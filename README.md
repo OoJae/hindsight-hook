@@ -109,8 +109,11 @@ Measured gas (Foundry, `test/integration/Gas.t.sol`): swap+router+hook ≈ 313k 
 settle refund ≈ 91k, settle forfeit incl. donation flush ≈ 214k, poke ≈ 29k — cents on an L2.
 
 ```bash
-git clone --recursive https://github.com/OoJae/hindsight-hook
-cd hindsight-hook
+git clone https://github.com/OoJae/hindsight-hook && cd hindsight-hook
+# fast dep init (the full --recursive pulls ~1GB of unrelated nested submodules):
+git submodule update --init lib/reactive-lib lib/v4-hooks-public
+git -C lib/v4-hooks-public submodule update --init --recursive lib/v4-core lib/v4-periphery
+git -C lib/v4-hooks-public submodule update --init lib/openzeppelin-contracts lib/solady lib/forge-std
 forge test                                   # 87 tests: unit, integration, invariant, fork
 forge test --mc UnichainSepoliaFork -vv      # fork suite vs real Unichain Sepolia state
 forge test --gas-report
