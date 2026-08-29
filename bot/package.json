@@ -1,0 +1,7 @@
+{
+  "name": "hindsight-keeper",
+  "type": "module",
+  "private": true,
+  "scripts": { "start": "node keeper.mjs" },
+  "dependencies": { "viem": "^2.21.0", "dotenv": "^16.4.0" }
+}
