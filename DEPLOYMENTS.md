@@ -40,3 +40,10 @@ Then: `upkeep.setForwarder(mode, registry.getForwarder(upkeepId))` per registrat
 | **HindsightReactive (RSC)** | `0x20dF56E0c2271A0D1e835A69A872139849e96F08` |
 | Subscriptions | SwapRecorded@1301 + Cron10 + Cron100 — all confirmed via system-contract events (tx `0x19f61b4c…a0a9`) |
 | Monitor | https://lasna.reactscan.net/rvm/0x5d4e95e57cf3369e31e6a50d7c4fecb04177226f |
+
+**LIVE AUTONOMOUS SETTLEMENT PROOF:** swap #1 (fired 18:01:52 UTC+1) was settled at
+18:02:21 with zero manual action — callback tx
+`0xacc2cf71beba00a94862f41aafe62d185fb93d30eabcc4d1c68db029d86b11c4` on Unichain Sepolia,
+sent by the Reactive relayer (`0xd499725b8D4AaD361060A5fC5d30022285159449`) through the
+official callback proxy into HindsightCallback → hook.trySettle → full benign refund.
+A second delivery (`0x24df308d…e9a2`) confirms the Cron sweep lane fires as well.

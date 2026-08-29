@@ -75,7 +75,11 @@ Plus the worked example in [mechanism-spec](../mechanism-spec.md): a benign trad
 
 - **Unichain** — the mechanism is flashblock-native: settlement windows are measured on **Uniswap's official FlashblockNumber contract** (live builder-maintained proxies: mainnet [`0x3c3a…1ec3→proxy 0x3c3a8a41e095c76b03f79f70955fff3b03cf753e`], Sepolia [`0x056466f1a50a6B5e4DCCF106074ee0083D721a42`] — verified ticking at 200ms cadence). To our knowledge this is the **first v4 hook to consume it**. Graceful `block.number` fallback + owner emergency switch if builder infra ever halts; `src/OperatedFlashblockNumber.sol` mirrors the official V1 allowlist pattern as a contingency. Fork tests run the full cycle against the **real Unichain Sepolia PoolManager**.
 
-*(Additional integrations will be listed here only if the code ships — per hookathon rules, no aspirational claims.)*
+- **Reactive Network** — **live and verified end-to-end**: an RSC on Reactive Lasna (`src/integrations/reactive/HindsightReactive.sol`, deployed `0x20dF56E0c2271A0D1e835A69A872139849e96F08`) subscribes to the hook's `SwapRecorded` events on Unichain Sepolia plus Cron sweep/flush topics, and drives settlement through the official callback proxy into `HindsightCallback` (`0xC971B9073E118DF50FAE99FeFa7EeEaEEe32C1fC`). Proof: swap settled autonomously in 29s by the Reactive relayer — tx `0xacc2cf71beba00a94862f41aafe62d185fb93d30eabcc4d1c68db029d86b11c4`. Settlement liveness without any operated infrastructure.
+
+- **Chainlink Automation** — `src/integrations/chainlink/HindsightUpkeep.sol` (deployed on Base Sepolia `0x163C7077F4480EB3315479bdf5831051DD91160a` against a second, chain-identical hook deployment `0x9C5e288E599EC90be441a5cCaFF73603F69E10C4`): three-mode conditional upkeep (settle/flush/poke), forwarder-gated, fork-tested against the real Base Sepolia PoolManager. Automation does not exist on Unichain (per Chainlink's supported-networks list) — the Base Sepolia deployment is the honest home for this integration, and doubles as the live demo of the hook's `block.number` fallback clock. Upkeep registration status tracked in `DEPLOYMENTS.md`.
+
+See `DEPLOYMENTS.md` for all addresses and proof transactions.
 
 ## Repository tour
 
