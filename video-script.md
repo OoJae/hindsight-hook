@@ -71,7 +71,10 @@ have clawed back from measurably-informed flow — on top of fee income, on the 
 existing 1-basis-point fee. And this histogram is the whole thesis in one picture: benign
 flow clusters at the headline fee; toxic flow pays its markout."
 
-*(quote the actual numbers from replay.py output — X% of swaps toxic, $Y recaptured, +Z% vs fees)*
+**The numbers to say:** "Fifty-five thousand real swaps, thirteen million dollars of volume.
+Hindsight recaptures a thousand dollars on top of sixty-seven hundred in fees — a sixteen
+percent raise for LPs. Ten percent of swaps read toxic — and ninety percent of traders pay
+exactly the five-basis-point headline, in full, with their bond refunded." 
 
 ## 4:00–4:40 — Why this is different (comparison slide from README)
 

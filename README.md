@@ -54,12 +54,22 @@ The newest generation of defenses (priority-fee MEV taxes à la Angstrom L2 / Ba
 
 † the only am-AMM production deployment was exploited and shut down in 2025.
 
-## Sustainable liquidity, quantified
+## Sustainable liquidity, quantified — on real mainnet flow
 
-With a 5bps headline fee on a volatile pair (worked example in [mechanism-spec](../mechanism-spec.md)):
-- benign trader: **$50 effective cost per $100k swap** vs $300 on a 30bps pool — deterministic, bond refunded
-- LPs recapture the informed-flow spread: forfeitures make up for the fee cut at just **12% recapture**; at 80% recapture the worked example cuts LP losses **~85%**
-- `backtest/` replays **real Unichain mainnet ETH/USDC swaps** through the exact on-chain logic and charts the LP value recaptured — reproduce with two commands (below)
+`backtest/` replays **7 days of real Unichain mainnet ETH/USDC swaps** through the exact on-chain markout logic (block-granular offline; the hook itself is 200ms-granular — conservative):
+
+| ETH/USDC 5bp pool, 7 days | |
+|---|---|
+| swaps replayed | **55,822** ($13.4M volume) |
+| LP fee income (status quo) | $6,691 |
+| **Hindsight clawback on top** | **+$1,071 (+16.0% LP revenue)** |
+| toxic flow identified | 9.9% of swaps, 12.9% of volume |
+| benign effective fee | **exactly 5.00 bps** (bond fully refunded) |
+| toxic effective fee | 11.2 bps (fee + forfeited bond) |
+
+The top three forfeiting addresses are unmistakable bots (27,901 / 9,434 / 6,362 swaps in a week) — matching the research finding that a handful of searchers capture most CEX-DEX extraction. Meanwhile **90% of swaps pay exactly the headline fee**.
+
+Plus the worked example in [mechanism-spec](../mechanism-spec.md): a benign trader pays **$50 per $100k swap** vs $300 on a 30bps pool; break-even recapture for LPs vs a 30bps pool is just 12%.
 
 ## Partner integrations
 
@@ -91,8 +101,11 @@ test/
 
 ## Run it
 
+Measured gas (Foundry, `test/integration/Gas.t.sol`): swap+router+hook ≈ 313k total,
+settle refund ≈ 91k, settle forfeit incl. donation flush ≈ 214k, poke ≈ 29k — cents on an L2.
+
 ```bash
-forge test                                   # 62 tests: unit, integration, invariant, fork
+forge test                                   # 63 tests: unit, integration, invariant, fork
 forge test --mc UnichainSepoliaFork -vv      # fork suite vs real Unichain Sepolia state
 forge test --gas-report
 
