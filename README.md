@@ -135,7 +135,7 @@ cd bot && npm i && npm start                 # keeper: poke/settle/flush
 - Hook permission bits validated against implementation (`Hooks.validateHookPermissions`)
 - `settle()` opens its own `unlock` — cannot be reentered from inside any swap (v4 lock)
 - Callback authenticated to the PoolManager; verdicts computed only from finalized windows
-- TWAP: time-weighted with per-observation jump clamping; bond capped so manipulation is never +EV (`bond ≤ κ·L_active·θ` — see mechanism spec §A3)
+- TWAP: time-weighted with per-observation jump clamping; bond capped at the linearized cost of moving the pool by the toxicity threshold (`bond ≤ κ·L_active·θ`) so manipulation is never +EV — thin pools degrade toward a plain low-fee pool; range-exiting fills pay the standard bond (max realized price move = max markout exposure)
 - Rounding: forfeits round down, refunds get the remainder (trader-favoring on dust)
 - Invariant-tested: escrowed claims ≡ pending bonds; hook custody ≡ donation pot
 

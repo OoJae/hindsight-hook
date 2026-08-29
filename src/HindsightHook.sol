@@ -13,6 +13,7 @@ import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import {SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 
 import {IFlashblockNumber} from "./interfaces/IFlashblockNumber.sol";
 import {MarkoutLib} from "./libraries/MarkoutLib.sol";
@@ -263,7 +264,13 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     ) internal returns (uint256 bond) {
         PoolId id = key.toId();
         HindsightParams memory p = poolParams[id];
-        bond = BondMathLib.bond(absUnspec, p.bondBps, _bondMultiplier(trader), p.sizeTierCap, 0);
+        bond = BondMathLib.bond(
+            absUnspec,
+            p.bondBps,
+            _bondMultiplier(trader),
+            p.sizeTierCap,
+            _bondCap(id, isCurrency0, p.thetaMinTicks)
+        );
         if (bond == 0) return 0;
 
         (, int24 execTick,,) = poolManager.getSlot0(id);
@@ -493,6 +500,31 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         observations[id].write(currentStamp(), tick);
     }
 
+    /// @notice Manipulation-cost bond cap (spec A3): never escrow more than it costs an
+    ///         attacker to move the settlement TWAP by the toxicity threshold.
+    ///         cap ≈ κ · L_active · θ_min, linearized: moving the pool θ ticks with
+    ///         active liquidity L costs ≈ L·sqrtP·θ·1e-4 in token1 (or L/sqrtP·θ·1e-4
+    ///         in token0); κ = ½ is folded into the 20_000 denominator. Thin pools thus
+    ///         degrade toward a plain low-fee pool instead of becoming manipulable.
+    /// @dev Returns 0 (= no cap in BondMathLib) when active liquidity is zero — which
+    ///      happens for swaps that exit the initialized range. Those pay the standard
+    ///      uncapped bond deliberately: a range-exiting fill realizes maximal price
+    ///      movement (maximal markout exposure), and capping it against zero edge
+    ///      liquidity would let toxic flow dodge bonds by overshooting the range.
+    function _bondCap(PoolId id, bool isCurrency0, int24 thetaMinTicks)
+        internal
+        view
+        returns (uint256 cap)
+    {
+        uint128 liq = poolManager.getLiquidity(id);
+        if (liq == 0 || thetaMinTicks <= 0) return 0;
+        (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(id);
+        uint256 perTick = isCurrency0
+            ? FullMath.mulDiv(liq, 1 << 96, sqrtPriceX96)
+            : FullMath.mulDiv(liq, sqrtPriceX96, 1 << 96);
+        cap = perTick * uint256(uint24(thetaMinTicks)) / 20_000;
+    }
+
     // ────────────────────────────────── reputation ─────────────────────────────────
     function _bondMultiplier(address trader) internal view returns (uint256 m) {
         m = ToxicityLib.multiplier(
@@ -557,14 +589,18 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         poolParams[id] = p;
     }
 
-    /// @notice Bond quote for a prospective swap (frontend preview).
+    /// @notice Bond quote for a prospective swap (frontend preview). Conservative: uses
+    ///         the smaller of the two per-side manipulation-cost caps.
     function previewBond(PoolId id, address trader, uint256 unspecifiedAmount)
         external
         view
         returns (uint256)
     {
         HindsightParams memory p = poolParams[id];
-        return BondMathLib.bond(unspecifiedAmount, p.bondBps, _bondMultiplier(trader), p.sizeTierCap, 0);
+        uint256 cap0 = _bondCap(id, true, p.thetaMinTicks);
+        uint256 cap1 = _bondCap(id, false, p.thetaMinTicks);
+        uint256 cap = cap0 < cap1 ? cap0 : cap1;
+        return BondMathLib.bond(unspecifiedAmount, p.bondBps, _bondMultiplier(trader), p.sizeTierCap, cap);
     }
 
     /// @notice Preview a pending swap's provisional verdict with current data.
