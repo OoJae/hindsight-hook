@@ -69,7 +69,7 @@ The newest generation of defenses (priority-fee MEV taxes à la Angstrom L2 / Ba
 
 The top three forfeiting addresses are unmistakable bots (27,901 / 9,434 / 6,362 swaps in a week) — matching the research finding that a handful of searchers capture most CEX-DEX extraction. Meanwhile **90% of swaps pay exactly the headline fee**.
 
-Plus the worked example in [mechanism-spec](../mechanism-spec.md): a benign trader pays **$50 per $100k swap** vs $300 on a 30bps pool; break-even recapture for LPs vs a 30bps pool is just 12%.
+Plus the worked example from the mechanism design: a benign trader pays **$50 per $100k swap** vs $300 on a 30bps pool; break-even recapture for LPs vs a 30bps pool is just 12%.
 
 ## Partner integrations
 
