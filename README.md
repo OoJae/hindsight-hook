@@ -6,6 +6,10 @@
 
 Built for the **UHI10 Hookathon** (theme: *Sustainable Liquidity & MEV Protection*).
 
+**🔗 Live app (Unichain Sepolia): https://oojae.github.io/hindsight-hook/** — watch the real
+flashblock counter tick, get a bond quote, and see live settlements incl. an actual toxic
+forfeit. Connect any wallet on Unichain Sepolia to swap ("Mint demo tokens" gives you balance).
+
 ---
 
 ## The problem

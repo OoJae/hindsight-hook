@@ -1,5 +1,7 @@
 # Hindsight — Live Deployments (Aug 29, 2026)
 
+**Public frontend: https://oojae.github.io/hindsight-hook/**
+
 Deployer (all chains): `0x5d4E95E57cf3369E31E6a50D7C4fECB04177226f`
 
 ## Current deployment: v2 (Aug 29 late — includes the manipulation-cost bond cap)
