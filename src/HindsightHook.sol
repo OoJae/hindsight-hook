@@ -93,6 +93,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     // ─────────────────────────────────── storage ───────────────────────────────────
     IFlashblockNumber public immutable flashblockNumber;
     uint256 public immutable fallbackStampsPerBlock; // scaling for the block.number fallback
+    bool public clockFallbackForced;
     address public owner;
 
     mapping(PoolId => PoolKey) public poolKeys;
@@ -167,18 +168,28 @@ contract HindsightHook is BaseHook, IUnlockCallback {
 
     // ─────────────────────────────── flashblock clock ──────────────────────────────
     /// @notice Current flashblock stamp with graceful block.number fallback.
-    /// @dev The official counter is monotonic and does NOT reset per block. If the
-    ///      FlashblockNumber contract is absent/stale/reverting we fall back to
-    ///      block.number scaled to flashblock units so N/W params keep their meaning.
+    /// @dev The official counter is monotonic and does NOT reset per block, and it did
+    ///      not start at block 0 — so it must never be compared against a block-derived
+    ///      floor (on Unichain Sepolia block.number*10 exceeds the live counter).
+    ///      Rule: a present, nonzero, non-reverting counter is authoritative; the
+    ///      block.number fallback applies only when the counter is absent/zero/reverting,
+    ///      or when the owner has forced the fallback after a builder-infra failure.
+    ///      NOTE: forcing the fallback changes the clock's origin — only do it on pools
+    ///      with no pending settlements (documented emergency action).
     function currentStamp() public view returns (uint48) {
-        uint256 floorStamp = block.number * fallbackStampsPerBlock;
         address fb = address(flashblockNumber);
-        if (fb.code.length > 0) {
+        if (!clockFallbackForced && fb.code.length > 0) {
             try IFlashblockNumber(fb).getFlashblockNumber() returns (uint256 n) {
-                if (n > floorStamp) return uint48(n);
+                if (n != 0) return uint48(n);
             } catch {}
         }
-        return uint48(floorStamp);
+        return uint48(block.number * fallbackStampsPerBlock);
+    }
+
+    /// @notice Emergency clock switch should the builder-maintained counter die.
+    function forceClockFallback(bool forced) external {
+        if (msg.sender != owner) revert NotOwner();
+        clockFallbackForced = forced;
     }
 
     // ─────────────────────────────────── hooks ─────────────────────────────────────
