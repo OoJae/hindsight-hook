@@ -6,3 +6,4 @@ solmate/=lib/v4-hooks-public/lib/v4-core/lib/solmate/
 permit2/=lib/v4-hooks-public/lib/v4-periphery/lib/permit2/
 @openzeppelin/contracts/=lib/v4-hooks-public/lib/openzeppelin-contracts/contracts/
 solady/=lib/v4-hooks-public/lib/solady/src/
+reactive-lib/=lib/reactive-lib/src/
