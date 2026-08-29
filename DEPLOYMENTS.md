@@ -27,12 +27,26 @@ refund. Settle tx `0x940bf2f10c4e2990f32d835ffa923ea490c6d852bc746e70973df11d9f5
 | Chainlink registry (v2.3) | `0x91D4a4C3D448c7f3CB477332B1c7D420a5810aC3` |
 | Chainlink registrar (v2.3) | `0xf28D56F3A707E25B71Ce529a21AF388751E1CF2A` |
 
-**Upkeep registration (UI, automation.chain.link → Base Sepolia → Custom logic → target
-`0x163C7077F4480EB3315479bdf5831051DD91160a`):**
-- mode 0 settle: checkData `0x0000000000000000000000000000000000000000000000000000000000000000`, gas 2,000,000
-- mode 1 flush:  checkData `0x0000000000000000000000000000000000000000000000000000000000000001`, gas 800,000
-- mode 2 poke:   checkData `0x0000000000000000000000000000000000000000000000000000000000000002`, gas 500,000
-Then: `upkeep.setForwarder(mode, registry.getForwarder(upkeepId))` per registration.
+**Upkeeps — registered PROGRAMMATICALLY via the v2.3 registrar** (the Automation web UI
+is deprecated to withdraw-only; registration flow removed — done with cast against
+`registerUpkeep(RegistrationParams)` incl. the v2.3 `billingToken` field, auto-approved):
+
+| mode | name | upkeepId | forwarder (wired ✓) |
+|---|---|---|---|
+| 0 settle (2M gas, 2 LINK) | hindsight-settle | `51747108707998861380173403952443167944368945447506334027843948685279363770052` | `0x5421C2236f245D0B08339A61c4c525b61c617C3B` |
+| 1 flush (800k, 1 LINK) | hindsight-flush | `56537333564254720060701579846199481314031894726327294970644483346858838476651` | `0xB8CbA46C68e95652Ac7481ee5dBfe0072C6128F6` |
+| 2 poke (500k, 1 LINK) | hindsight-poke | `23193929133341913901063287104405604679642704539803669672834394425561263029096` | `0xb3b26146240AEDc556b89E43A466D4CBF5Db1951` |
+
+**Status / honesty note:** all three upkeeps are registered, auto-approved, LINK-funded and
+active on the registry; our `checkUpkeep` verifiably returns `upkeepNeeded=true` on-chain.
+However, classic Automation testnets were sunset by Chainlink in mid-2026 and the Base
+Sepolia DON is no longer executing: the ENTIRE v2.3 registry
+(`0x91D4a4C3D448c7f3CB477332B1c7D420a5810aC3`) shows **zero UpkeepPerformed events in the
+30+ hours we scanned**. The perform path is therefore demonstrated two ways instead:
+(1) the fork test `test/fork/BaseSepolia.t.sol` executes the full check→perform→refund
+cycle against the real Base Sepolia PoolManager through the real forwarder auth pattern;
+(2) the mechanism's liveness never depended on any single keeper — settlement is
+permissionless, the Reactive lane settles live, and auto-forfeit protects LPs regardless.
 
 ## Reactive Lasna (5318007)
 | Contract | Address |
