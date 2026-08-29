@@ -34,7 +34,7 @@ def rpc(method, params, retries=9):
     for attempt in range(retries):
         url = RPCS[_rpc_idx % len(RPCS)]
         try:
-            req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+            req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) hindsight-backtest/1.0"})
             with urllib.request.urlopen(req, timeout=30) as r:
                 out = json.loads(r.read())
             if "error" in out:
