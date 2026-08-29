@@ -17,6 +17,7 @@ contract DeployReactiveRsc is Script {
         HindsightReactive rsc = new HindsightReactive{value: 0.2 ether}(
             origin, vm.envAddress("HOOK"), vm.envAddress("REACTIVE_CALLBACK")
         );
+        rsc.activateSubscriptions(); // separate tx — constructor subscriptions are rejected
         vm.stopBroadcast();
 
         console2.log("HindsightReactive (Lasna):", address(rsc));

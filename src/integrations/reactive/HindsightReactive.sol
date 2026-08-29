@@ -51,9 +51,9 @@ contract HindsightReactive is AbstractPausableReactive {
         originChainId = _originChainId;
         hook = _hook;
         callbackContract = _callbackContract;
-        if (!vm) {
-            _subscribeAll();
-        }
+        // NOTE: no constructor subscriptions — the system contract rejects subscribe()
+        // from contracts still being created (verified live on Lasna). Call
+        // activateSubscriptions() right after deployment instead.
     }
 
     /// @notice Post-deploy fallback: the system contract can reject subscriptions from
