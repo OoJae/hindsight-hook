@@ -595,4 +595,8 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     function observationCount(PoolId id) external view returns (uint16) {
         return observations[id].count;
     }
+
+    function newestObservation(PoolId id) external view returns (uint48 stamp, int24 tick, bool ok) {
+        return observations[id].newest();
+    }
 }
