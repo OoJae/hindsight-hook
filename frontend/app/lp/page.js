@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { formatUnits } from "viem";
 import { pub } from "../../lib/clients";
 import { HOOK, hookAbi } from "../../lib/config";
+import { getLogsChunked } from "../../lib/logs";
 
 export default function LpPage() {
   const [settles, setSettles] = useState([]);
@@ -12,11 +13,11 @@ export default function LpPage() {
     if (!HOOK) return;
     let stop = false;
     (async () => {
-      const latest = await pub.getBlockNumber();
-      const from = latest > 500_000n ? latest - 500_000n : 0n;
+      const settledEvent = hookAbi.find((x) => x.type === "event" && x.name === "Settled");
+      const flushEvent = hookAbi.find((x) => x.type === "event" && x.name === "DonationFlushed");
       const [settled, flushed] = await Promise.all([
-        pub.getContractEvents({ address: HOOK, abi: hookAbi, eventName: "Settled", fromBlock: from }),
-        pub.getContractEvents({ address: HOOK, abi: hookAbi, eventName: "DonationFlushed", fromBlock: from }),
+        getLogsChunked(pub, { address: HOOK, event: settledEvent }),
+        getLogsChunked(pub, { address: HOOK, event: flushEvent }),
       ]);
       if (stop) return;
       setSettles(settled.reverse());

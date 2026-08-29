@@ -139,6 +139,12 @@ cd bot && npm i && npm start                 # keeper: poke/settle/flush
 - Rounding: forfeits round down, refunds get the remainder (trader-favoring on dust)
 - Invariant-tested: escrowed claims ≡ pending bonds; hook custody ≡ donation pot
 
+## Future work
+
+- Production router with `IMsgSender` attribution and bond-aware `minAmountOut` (the demo router is v4-core's `PoolSwapTest` + `hookData` beneficiary passthrough, which the hook's `IMsgSender` fallback also supports)
+- Time-weighted **median** settlement TWAP (current: jump-clamped time-weighted average)
+- Cross-pool portable reputation via an attested registry; fast-lane flat-fee opt-out
+
 ## Status & provenance
 
 Built during the UHI10 hookathon window (new code; scaffolding follows the UHI course's

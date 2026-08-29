@@ -18,9 +18,9 @@ const pub = createPublicClient({ transport: http(RPC) });
 const wallet = createWalletClient({ account, transport: http(RPC) });
 
 const HOOK = process.env.HOOK;
-const FBN = process.env.FLASHBLOCK_NUMBER || null; // only when we operate our own
+// NOTE: counter ticking removed — the official builder-maintained FlashblockNumber
+// is live on Unichain Sepolia (0x056466f1a50a6B5e4DCCF106074ee0083D721a42).
 const TICK_MS = Number(process.env.TICK_MS ?? 4000);
-const FLASHBLOCK_MS = 200;
 
 const hookAbi = parseAbi([
   'function currentStamp() view returns (uint48)',
@@ -29,10 +29,6 @@ const hookAbi = parseAbi([
   'function flushDonations(bytes32 id)',
   'function getSwap(uint256) view returns ((address trader,uint48 execStamp,bool zeroForOne,uint8 status,bytes32 poolId,uint128 notional,uint128 bond,bool bondIsCurrency0,int24 execTick))',
   'function nextSwapId() view returns (uint256)',
-]);
-const fbnAbi = parseAbi([
-  'function getFlashblockNumber() view returns (uint256)',
-  'function setFlashblockNumber(uint256 n)',
 ]);
 
 const poolKey = {
@@ -47,20 +43,7 @@ const POOL_ID = process.env.POOL_ID;
 // N + W from default params — keep in sync with HindsightParams
 const MATURITY = 15, WINDOW = 10;
 const genesis = Date.now();
-let fbnBase = null;
 
-async function tickCounter() {
-  if (!FBN) return;
-  if (fbnBase === null) {
-    fbnBase = await pub.readContract({ address: FBN, abi: fbnAbi, functionName: 'getFlashblockNumber' });
-  }
-  const target = fbnBase + BigInt(Math.floor((Date.now() - genesis) / FLASHBLOCK_MS));
-  const current = await pub.readContract({ address: FBN, abi: fbnAbi, functionName: 'getFlashblockNumber' });
-  if (target > current) {
-    const tx = await wallet.writeContract({ address: FBN, abi: fbnAbi, functionName: 'setFlashblockNumber', args: [target] });
-    console.log(`[fbn] -> ${target} (${tx.slice(0, 10)})`);
-  }
-}
 
 const settled = new Set();
 async function settleMatured() {
@@ -102,8 +85,8 @@ async function flush() {
   } catch (e) { /* epoch-gated no-op reverts are fine */ }
 }
 
-console.log(`Hindsight keeper up — hook ${HOOK}, counter ${FBN ?? 'official/fallback'}`);
+console.log(`Hindsight keeper up — hook ${HOOK} (official flashblock counter)`);
 setInterval(async () => {
-  try { await tickCounter(); await settleMatured(); await flush(); }
+  try { await settleMatured(); await flush(); }
   catch (e) { console.error('[loop]', e.shortMessage ?? e.message); }
 }, TICK_MS);
