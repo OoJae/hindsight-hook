@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export const metadata = {
   title: "Hindsight — fees decided after the trade",
   description: "Ex-post markout-settled fees for Uniswap v4",
@@ -34,9 +36,9 @@ export default function RootLayout({ children }) {
       <body>
         <nav>
           <span className="brand">🔮 Hindsight</span>
-          <a href="/">Swap</a>
-          <a href="/lp">LP dashboard</a>
-          <a href="/toxicity">Toxicity</a>
+          <Link href="/">Swap</Link>
+          <Link href="/lp">LP dashboard</Link>
+          <Link href="/toxicity">Toxicity</Link>
           <span className="muted" style={{ marginLeft: "auto" }}>fees decided after the trade · Unichain Sepolia</span>
         </nav>
         <main>{children}</main>
