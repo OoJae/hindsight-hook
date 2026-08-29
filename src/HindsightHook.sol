@@ -306,12 +306,64 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         SwapRecord storage r = swaps[swapId];
         if (r.trader == address(0)) revert UnknownSwap();
         if (r.status != 0) revert AlreadySettled();
+        if (!_matured(r)) revert NotMatured();
+        _doSettle(swapId, r);
+    }
 
+    /// @notice Non-reverting settle for batch callers (Chainlink performUpkeep, Reactive
+    ///         callbacks, keeper bots). Skips instead of reverting so a racing manual
+    ///         settle can never brick a batch.
+    function trySettle(uint256 swapId) public returns (bool settled) {
+        SwapRecord storage r = swaps[swapId];
+        if (r.trader == address(0) || r.status != 0 || !_matured(r)) return false;
+        _doSettle(swapId, r);
+        return true;
+    }
+
+    /// @notice Batch settlement — settles whatever is ready, skips the rest.
+    function settleBatch(uint256[] calldata swapIds) external returns (uint256 nSettled) {
+        for (uint256 i; i < swapIds.length; i++) {
+            if (trySettle(swapIds[i])) nSettled++;
+        }
+    }
+
+    /// @notice Bounded scan for matured-unsettled swaps — the shared work-discovery view
+    ///         for Chainlink checkUpkeep, Reactive sweeps, and the keeper bot.
+    /// @param fromId cursor to start scanning from
+    /// @param limit  max ids to return (scan is bounded at 4x limit records)
+    /// @return ids        matured, still-pending swap ids
+    /// @return nextCursor pass this as fromId on the next call
+    function pendingMatured(uint256 fromId, uint256 limit)
+        external
+        view
+        returns (uint256[] memory ids, uint256 nextCursor)
+    {
+        uint256 n = nextSwapId;
+        uint256 scanCap = limit * 4 + 32;
+        uint256[] memory buf = new uint256[](limit);
+        uint256 found;
+        uint256 i = fromId;
+        for (uint256 scanned; i < n && found < limit && scanned < scanCap; (i++, scanned++)) {
+            SwapRecord storage r = swaps[i];
+            if (r.status == 0 && r.trader != address(0) && _matured(r)) {
+                buf[found++] = i;
+            }
+        }
+        nextCursor = i;
+        ids = new uint256[](found);
+        for (uint256 j; j < found; j++) ids[j] = buf[j];
+    }
+
+    function _matured(SwapRecord storage r) internal view returns (bool) {
+        HindsightParams storage p = poolParams[r.poolId];
+        return currentStamp() >= r.execStamp + p.maturityStamps + p.twapWindowStamps;
+    }
+
+    function _doSettle(uint256 swapId, SwapRecord storage r) internal {
         HindsightParams memory p = poolParams[r.poolId];
         uint48 nowStamp = currentStamp();
         uint48 windowStart = r.execStamp + p.maturityStamps;
         uint48 windowEnd = windowStart + p.twapWindowStamps;
-        if (nowStamp < windowEnd) revert NotMatured();
 
         (bool toxic, uint256 fWad, int256 markoutTicks, int256 thetaTicks) =
             _verdict(r, p, nowStamp, windowStart, windowEnd);
