@@ -274,11 +274,18 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     }
 
     // ────────────────────────────────── settlement ─────────────────────────────────
+    enum CallbackOp {
+        SETTLE,
+        FLUSH
+    }
+
     struct SettleData {
         uint256 swapId;
         bool toxic;
         uint256 forfeitWad; // 0..1e18 fraction of the bond forfeited
         address keeper;
+        int256 markoutTicks;
+        int256 thetaTicks;
     }
 
     /// @notice Permissionless ex-post settlement of a recorded swap.
@@ -299,9 +306,15 @@ contract HindsightHook is BaseHook, IUnlockCallback {
             _verdict(r, p, nowStamp, windowStart, windowEnd);
 
         _updateReputation(r.trader, markoutTicks, thetaTicks, toxic);
-        poolManager.unlock(abi.encode(SettleData(swapId, toxic, fWad, msg.sender)));
+        poolManager.unlock(
+            abi.encode(CallbackOp.SETTLE, abi.encode(SettleData(swapId, toxic, fWad, msg.sender, markoutTicks, thetaTicks)))
+        );
+    }
 
-        // r.status is set inside unlockCallback; emit happens there too.
+    /// @notice Push the pending donation pot toward in-range LPs (epoch-gated drip).
+    ///         Callable by anyone — the keeper bot calls it on a timer.
+    function flushDonations(PoolId id) external {
+        poolManager.unlock(abi.encode(CallbackOp.FLUSH, abi.encode(id)));
     }
 
     /// @dev Verdict computed only from finalized-window observations. Beyond the grace
@@ -329,7 +342,16 @@ contract HindsightHook is BaseHook, IUnlockCallback {
 
     function unlockCallback(bytes calldata data) external returns (bytes memory) {
         if (msg.sender != address(poolManager)) revert CallerNotManager();
-        SettleData memory s = abi.decode(data, (SettleData));
+        (CallbackOp op, bytes memory payload) = abi.decode(data, (CallbackOp, bytes));
+        if (op == CallbackOp.FLUSH) {
+            PoolId id = abi.decode(payload, (PoolId));
+            _maybeFlushDonations(id, poolKeys[id], poolParams[id]);
+            return "";
+        }
+        return _settleCallback(abi.decode(payload, (SettleData)));
+    }
+
+    function _settleCallback(SettleData memory s) internal returns (bytes memory) {
         SwapRecord storage r = swaps[s.swapId];
         PoolKey memory key = poolKeys[r.poolId];
         HindsightParams memory p = poolParams[r.poolId];
@@ -359,7 +381,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
 
         _maybeFlushDonations(r.poolId, key, p);
 
-        emit Settled(s.swapId, r.trader, s.toxic, 0, 0, refund, forfeit, tip);
+        emit Settled(s.swapId, r.trader, s.toxic, s.markoutTicks, s.thetaTicks, refund, forfeit, tip);
         return "";
     }
 

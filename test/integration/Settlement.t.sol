@@ -1,0 +1,154 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.26;
+
+import "./HindsightFixture.sol";
+import {Vm} from "forge-std/Vm.sol";
+
+contract SettlementTest is HindsightFixture {
+    address constant TRADER = address(0xBEEF);
+    address constant KEEPER = address(0xCAFE);
+
+    function test_settle_reverts_before_maturity() public {
+        swapAs(TRADER, true, -1e18);
+        advanceTo(T0 + 5); // window not closed
+        vm.expectRevert(HindsightHook.NotMatured.selector);
+        hook.settle(0);
+    }
+
+    function test_settle_reverts_on_unknown_swap() public {
+        vm.expectRevert(HindsightHook.UnknownSwap.selector);
+        hook.settle(42);
+    }
+
+    function test_settle_reverts_on_double_settle() public {
+        swapAs(TRADER, true, -1e18);
+        advanceTo(pastWindow(0));
+        hook.settle(0);
+        vm.expectRevert(HindsightHook.AlreadySettled.selector);
+        hook.settle(0);
+    }
+
+    function test_benign_refund_goes_to_beneficiary_not_router() public {
+        swapAs(TRADER, true, -1e18);
+        uint128 bond = hook.getSwap(0).bond;
+        advanceTo(pastWindow(0));
+
+        uint256 before = bal1(TRADER);
+        vm.prank(KEEPER);
+        hook.settle(0);
+
+        assertEq(bal1(TRADER) - before, uint256(bond), "full refund to beneficiary");
+        assertEq(hook.getSwap(0).status, 1, "status refunded");
+    }
+
+    function test_refund_pays_no_keeper_tip() public {
+        swapAs(TRADER, true, -1e18);
+        advanceTo(pastWindow(0));
+        uint256 before = bal1(KEEPER);
+        vm.prank(KEEPER);
+        hook.settle(0);
+        assertEq(bal1(KEEPER), before, "tip only comes from forfeits");
+    }
+
+    function test_toxic_forfeit_with_keeper_tip() public {
+        swapAs(TRADER, true, -1e18);
+        uint128 bond = hook.getSwap(0).bond;
+
+        driftPrice(true, 20, -30e18); // sustained same-direction drift through the window
+        advanceTo(pastWindow(0));
+
+        uint256 traderBefore = bal1(TRADER);
+        uint256 keeperBefore = bal1(KEEPER);
+        vm.recordLogs();
+        vm.prank(KEEPER);
+        hook.settle(0);
+
+        uint256 refund = bal1(TRADER) - traderBefore;
+        uint256 tip = bal1(KEEPER) - keeperBefore;
+        assertLt(refund, uint256(bond), "toxic flow does not get a full refund");
+        assertGt(tip, 0, "keeper tipped from the forfeit");
+
+        // Part of the forfeit may already have been dripped to LPs inside the settle
+        // callback (epoch flush). Conservation: refund + tip + pot + flushed == bond.
+        uint256 flushed = _sumFlushed();
+        (uint128 pot0, uint128 pot1,) = hook.pendingDonations(poolId);
+        assertEq(uint256(refund) + tip + pot0 + pot1 + flushed, uint256(bond), "bond fully accounted");
+        // Custody invariant: the hook holds exactly the un-flushed pot in real tokens.
+        assertEq(bal1(address(hook)), uint256(pot1), "hook custody == pot");
+        assertEq(hook.getSwap(0).status, 2, "status forfeited");
+    }
+
+    function _sumFlushed() internal returns (uint256 flushed) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 topic = keccak256("DonationFlushed(bytes32,uint128,uint128)");
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics[0] == topic) {
+                (uint128 a0, uint128 a1) = abi.decode(logs[i].data, (uint128, uint128));
+                flushed += uint256(a0) + a1;
+            }
+        }
+    }
+
+    function test_missing_window_data_refunds() public {
+        swapAs(TRADER, true, -1e18);
+        uint128 bond = hook.getSwap(0).bond;
+        uint48 windowEnd = hook.getSwap(0).execStamp + 25;
+
+        // Rotate the entire ring buffer with observations AFTER the window, so no
+        // usable data covers it. Missing data must NEVER punish the trader.
+        advanceTo(windowEnd + 1);
+        for (uint256 i = 0; i < 130; i++) {
+            fb.increment();
+            hook.poke(key);
+        }
+
+        uint256 before = bal1(TRADER);
+        hook.settle(0);
+        assertEq(bal1(TRADER) - before, uint256(bond), "full refund on missing data");
+    }
+
+    function test_auto_forfeit_after_grace() public {
+        swapAs(TRADER, true, -1e18);
+        uint128 bond = hook.getSwap(0).bond;
+        // Price never moved (benign!), but the trader waits out the grace period —
+        // waiting out the ring buffer must not be an escape hatch, so: full forfeit.
+        advanceTo(hook.getSwap(0).execStamp + 25 + 3000 + 1);
+
+        uint256 traderBefore = bal1(TRADER);
+        uint256 meBefore = bal1(address(this));
+        vm.recordLogs();
+        hook.settle(0);
+
+        assertEq(bal1(TRADER), traderBefore, "no refund after grace");
+        uint256 tip = bal1(address(this)) - meBefore; // we were the settle caller
+        uint256 flushed = _sumFlushed();
+        (uint128 pot0, uint128 pot1,) = hook.pendingDonations(poolId);
+        assertEq(tip + flushed + pot0 + pot1, uint256(bond), "entire bond goes to tip + LP pot/flush");
+    }
+
+    function test_reverted_swap_leaves_no_record() public {
+        // A swap that reverts (price limit) must not create a record or escrow — the
+        // structural revert-spam immunity claim, demonstrated.
+        uint256 idBefore = hook.nextSwapId();
+        vm.expectRevert();
+        swapRouter.swap(
+            key,
+            SwapParams({amountSpecified: -1e18, zeroForOne: true, sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1}),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            abi.encode(TRADER)
+        );
+        assertEq(hook.nextSwapId(), idBefore, "reverted tx never enters the measurement");
+    }
+
+    function test_two_sided_reversion_is_benign() public {
+        // Trade pushes price down, market bounces back within the window ⇒ refund.
+        swapAs(TRADER, true, -5e18);
+        uint128 bond = hook.getSwap(0).bond;
+        driftPrice(false, 20, -30e18); // opposite-direction flow: price reverts
+        advanceTo(pastWindow(0));
+
+        uint256 before = bal1(TRADER);
+        hook.settle(0);
+        assertEq(bal1(TRADER) - before, uint256(bond), "mean-reverting flow fully refunded");
+    }
+}
