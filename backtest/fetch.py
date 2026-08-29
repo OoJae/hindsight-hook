@@ -63,11 +63,11 @@ def decode_swap(log):
         "txIndex": int(log["transactionIndex"], 16),
         "logIndex": int(log["logIndex"], 16),
         "sender": "0x" + log["topics"][2][-40:],
-        "amount0": to_int(words[0], signed=True, bits=128),
-        "amount1": to_int(words[1], signed=True, bits=128),
+        "amount0": to_int(words[0], signed=True, bits=256),
+        "amount1": to_int(words[1], signed=True, bits=256),
         "sqrtPriceX96": int(words[2], 16),
         "liquidity": int(words[3], 16),
-        "tick": to_int(words[4], signed=True, bits=24),
+        "tick": to_int(words[4], signed=True, bits=256),
         "fee": int(words[5], 16),
     }
 

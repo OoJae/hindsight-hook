@@ -102,6 +102,12 @@ def replay(swaps, label):
         print(f"{label}: no replayable swaps")
         return
 
+    mks = sorted(r["markout"] for r in results)
+    def pct(q):
+        return mks[min(len(mks) - 1, int(q * len(mks)))]
+    print(f"markout distribution (ticks): p10={pct(0.1):.1f} p50={pct(0.5):.1f} p90={pct(0.9):.1f} "
+          f"p99={pct(0.99):.1f} max={mks[-1]:.1f}")
+
     vol_usd = sum(r["usd"] for r in results)
     fees = sum(r["fee"] for r in results)
     clawback = sum(r["forfeit"] for r in results)
