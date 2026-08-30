@@ -23,9 +23,9 @@ OBSERVATION_LIB = "f210c23792630cf1a119b696d3a2922b7b7550d4"  # deterministic CR
 
 TARGETS = [
     ("Unichain Sepolia", "https://sepolia.unichain.org",
-     "0x4475d1A77cb15f7867A37877B3f59E9a847990C4"),
+     "0xC4E83D74A486C056c6164655F1d2D5ae5408d0C4"),
     ("Base Sepolia", "https://sepolia.base.org",
-     "0x1f4BdB8C84613aB9533bB473Cdef51182BB750c4"),
+     "0xc60C0be68D02BD38Bc8aF44cf71D157C904950c4"),
 ]
 
 

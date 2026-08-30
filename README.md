@@ -12,7 +12,7 @@ Built for the **UHI10 Hookathon** (theme: *Sustainable Liquidity & MEV Protectio
 **🔗 Live app (Unichain Sepolia): https://oojae.github.io/hindsight-hook/**
 **🔬 Interactive evidence: https://oojae.github.io/hindsight-hook/explorer/** — re-prices all
 55,822 real mainnet swaps *in your browser* under any parameters you choose. Try to break it.
-**Hook:** `0x4475d1A77cb15f7867A37877B3f59E9a847990C4` · all addresses in [`DEPLOYMENTS.md`](DEPLOYMENTS.md) — watch the real
+**Hook:** `0xC4E83D74A486C056c6164655F1d2D5ae5408d0C4` · all addresses in [`DEPLOYMENTS.md`](DEPLOYMENTS.md) — watch the real
 flashblock counter tick, get a bond quote, and see live settlements incl. an actual toxic
 forfeit. Connect any wallet on Unichain Sepolia to swap ("Mint demo tokens" gives you balance).
 
@@ -46,7 +46,7 @@ The newest generation of defenses (priority-fee MEV taxes à la Angstrom L2 / Ba
 ```
 
 - **Markout** — signed post-trade drift in tick space (1 tick ≈ 1bp), measured against a **finalized** window: the verdict is a pure read; there is nothing to sandwich at settlement.
-- **θ = θ_min + k·σ** — the toxicity threshold breathes with realized volatility, so trending markets don't confiscate benign momentum flow. *We tax information, not volatility.*
+- **θ = θ_min + k·σ**, where σ is realized volatility over the 120s *before* the trade — the toxicity threshold breathes with the tape, so trending markets don't confiscate benign momentum flow, but the trade being judged cannot manufacture its own threshold. *We tax information, not volatility.*
 - **Bond** = 25bps of notional × reputation multiplier. New addresses pay full freight (discounts are **earned** through settled benign history — Sybil-proof); addresses caught extracting pay up to 3×; whales get no discount above a size tier (no reputation laundering).
 - **Forfeits drip** to LPs via `donate()` on an epoch schedule, which *bounds* the atomic
   snipe rather than hand-waving it away: a JIT LP that adds, triggers one flush and exits can
@@ -86,11 +86,11 @@ shuffle directions and re-run — everything else untouched.
 
 | horizon (N+W) | true clawback | random-label mean | z | beats |
 |---|---|---|---|---|
-| 1+1s | $654 | $960 | **−4.53** | 0/30 |
-| 3+2s | $1,071 | $1,187 | **−1.68** | 3/30 |
-| 5+2s | $1,576 | $1,503 | +0.92 | 25/30 |
-| **10+5s (shipped)** | **$2,338** | $1,980 | **+4.52** | **30/30** |
-| 30+10s | $4,028 | $3,171 | +9.45 | 30/30 |
+| 1+1s | $484 | $764 | **−4.39** | 0/30 |
+| 3+2s | $1,045 | $1,122 | **−1.07** | 5/30 |
+| 5+2s | $1,430 | $1,350 | +1.02 | 25/30 |
+| **10+5s (shipped)** | **$2,325** | $1,938 | **+4.89** | **30/30** |
+| 30+10s | $4,067 | $3,190 | +9.56 | 30/30 |
 
 **At short horizons the mechanism does not beat chance** — the dominant post-swap signal
 there is a trade's own price impact, not information (large trades see price revert against
@@ -105,8 +105,8 @@ earlier draft of this README quoted the 3+2s numbers; our own second-round audit
 | LP fee income (status quo, 5 bps) | $6,690.77 |
 | Post-swap drift in the trade's direction (gross positive) | $5,001.53 |
 | Net LP markout P&L, ex-fees (the 15s LVR bleed) | −$2,186.54 |
-| **Hindsight clawback** | **$2,337.72** (net of keeper tips: **$2,220.83** to LPs) |
-| **ρ = clawback ÷ gross positive markout** | **46.7%** |
+| **Hindsight clawback** | **$2,325.28** (net of keeper tips: **$2,209.02** to LPs) |
+| **ρ = clawback ÷ gross positive markout** | **46.5%** |
 
 ρ is deliberately measured against *gross* adverse selection, not net: the mechanism prices
 each trade's own informational cost and does not credit an informed trader for the
@@ -121,15 +121,17 @@ the same flow, then ask who hands over the incremental money:
 
 | mechanism | benign pays | toxic pays | separation | incremental revenue from **benign** flow |
 |---|---|---|---|---|
-| Flat fee (6.75 bps) | 6.75 bps | 6.75 bps | 1.0× | **75.7%** |
-| Volatility-scaled dynamic fee (5 + 4.22·σ) | 6.66 bps | 7.02 bps | 1.05× | **71.9%** |
-| **Hindsight** | **5.00 bps** | **12.18 bps** | **2.44×** | **0.0%** |
+| Flat fee (6.74 bps) | 6.74 bps | 6.74 bps | 1.0× | **76.0%** |
+| Volatility-scaled dynamic fee (5 + 4.27·σ) | 6.37 bps | 7.90 bps | 1.24× | **59.9%** |
+| **Hindsight** | **5.00 bps** | **12.24 bps** | **2.45×** | **0.0%** |
 
 All fees are volume-weighted — what a dollar of flow actually pays, and the same definition
 the [browser explorer](https://oojae.github.io/hindsight-hook/explorer/) and `replay.py` use,
 so all three agree. Given the *same* LP revenue, the best ex-ante signal available in
-`beforeSwap` separates toxic from benign flow by **5%**; Hindsight separates them by **144%**,
-and every benign bond comes back in full. ![who pays](backtest/chart_who_pays.png)
+`beforeSwap` separates toxic from benign flow by **24%**; Hindsight separates them by **145%**,
+and every benign bond comes back in full. (That 24% is up from 5% in v6 — a fairer showing
+for the competitor, because v7's toxic set is better identified and a volatility fee catches
+part of it. We report the number that makes our own case weaker, because it is the true one.) ![who pays](backtest/chart_who_pays.png)
 
 ### 3. Two obvious objections, answered with data
 
@@ -144,7 +146,7 @@ window** `[t+20s, t+60s)`, with a shuffled-harm control. The competitor is steel
 
 | mechanism | Pearson | Spearman |
 |---|---|---|
-| **Hindsight** | **0.424** | **0.420** |
+| **Hindsight** | **0.441** | **0.449** |
 | dynamic fee (trailing vol — fair ex-ante signal) | 0.036 | 0.007 |
 | flat fee | 0.000 | 0.000 |
 | *control: Hindsight vs shuffled harm* | *−0.001* | *0.002* |
@@ -157,63 +159,69 @@ the result strengthens:
 
 | sample | ρ | dynamic fee's take from benign |
 |---|---|---|
-| all 55,822 swaps | 46.7% | 71.9% |
-| excluding top sender (n=27,920) | **48.3%** | 71.7% |
-| excluding top-3 (n=12,128) | **53.5%** | 78.6% |
+| all 55,822 swaps | 46.5% | 59.9% |
+| excluding top sender (n=27,920) | **48.1%** | 60.1% |
+| excluding top-3 (n=12,128) | **53.8%** | 72.6% |
 
-### 4. We tax information, not volatility
-
-**First, a limitation we found by auditing our own live demo.** The 8-swap arb burst on
-Unichain Sepolia settles with θ = 31 for swaps #1–#5 (all refunded, markout 20–27) and θ = 3
-for #6–#7 (both forfeited, markout 20 and 10). The largest markout is acquitted and smaller
-ones convicted, because θ and the markout are measured over *the same window*: the burst's
-own companion prints land inside the early swaps' windows and lift their threshold. On a
-9-print demo tape that is a timing artifact, not classification — and we would rather say so
-than let it read as the mechanism working.
-
-On the real 55,822-swap tape it does not behave that way. θ sits at its floor (3 ticks) for
-**68.2%** of swaps and never exceeds **32.4**, and conviction is monotone in markout: every
-swap with markout ≥ 20 ticks is convicted at every θ level. The pathology needs a window
-dense with other prints, which is a thin-tape condition. It is still a real edge — an
-adversary who can pad their own window raises their own threshold — so it is capped in the
-mechanism (θ can no longer be driven past 31, where it previously reached 171) and listed in
-Future Work: *decouple the θ volatility
-window from the markout window, so the drift being scored cannot raise its own threshold.*
-
-With that said, here is the property measured at scale:
+### 4. We tax information, not volatility — and we had this wrong until v7
 
 The threshold θ scales with short-horizon realized volatility, so a violent-but-uninformed
-tape does not get confiscated. To show that term is doing real work, we calibrate a *static*
-θ (4.0 ticks) to flag the same total number of swaps (12,010 vs 12,071) and compare what each
-flags, by realized-volatility decile:
+tape is not confiscated. Through v6 we sourced that σ from the **settlement window** — the
+same observations the markout is measured over. Our own live demo exposed what that costs:
+the largest markout in an 8-swap arb burst was *acquitted* and a 10-tick one *convicted*,
+because the burst's own companion prints landed inside the early swaps' windows and lifted
+their threshold.
 
-| vol decile | static θ flags | vol-scaled θ flags |
+That is not a thin-tape curiosity. On the real 55,822-swap tape, with nobody attacking:
+
+| | |
+|---|---|
+| swaps with ≥1 of their **own** sender's prints inside their own θ window | 9,154 (16.4%) |
+| swaps that actually inflated their own θ | 4,195 |
+| mean inflation among those | **+2.72 ticks** (max +22.4) |
+| **swaps acquitted purely because of their own prints** | **927 (1.66% of all flow)** |
+
+So we changed where σ comes from: a trailing window `[t−120s, t)` that has already closed
+when the trade lands. Every number in that table becomes **zero** — not because a clamp was
+tightened, but because there is nothing left for the trade to write into. The regression test
+asserts the *equality* (`padding must move θ by exactly 0`), not a bound; a bound is still a
+mechanism with a price on it.
+
+We did not assume this was an improvement — we adjudicated it. Six estimators, all calibrated
+to flag the **same share** so "flags more" could not pass for "classifies better", scored
+against harm the mechanism never sees (a disjoint `[t+20s, t+60s)` window):
+
+| θ estimator | Spearman(charge, FUTURE harm) | false positives on harmless flow |
 |---|---|---|
-| 1 (quietest) | 13.0% | 18.7% |
-| 5 | 11.1% | 16.6% |
-| 9 | 31.5% | 18.9% |
-| **10 (most volatile)** | **44.3%** | **24.2%** |
+| static — no vol term at all | 0.5042 | 5.6% |
+| **trailing σ (v7, shipped)** | **0.5048** | **5.3%** |
+| in-window σ (v6) | 0.4719 | 5.4% |
 
-Same total flow flagged — but in the most volatile decile the static threshold confiscates
-**1.8× more**, while the vol-scaled one *shifts* its attention toward quiet-tape flow, where
-a large directional move is far more likely to be information than noise. That is the
-mechanism refusing to charge traders for being unlucky.
+**What v6 shipped was the worst of the six.** The volatility term was never the problem;
+its sourcing was. A five-second forward window is both writable by the trade being judged and
+far too noisy to estimate a volatility regime.
+
+**The honest cost.** The in-window sourcing genuinely did buy better false-positive
+protection in the loudest volatility decile (7.8% vs 14.2%), and the trailing σ does *not*
+reproduce that. We took the trade anyway — that protection was bought with a threshold a
+trader can move, and 927 real acquittals is the receipt. `compare.py` §4 prints the decile
+table on **both** volatility axes, because each estimator flatters itself on the axis that is
+its own input, and the unconditioned rate (where neither can) has all three within 0.3pp.
 ![vol decile](backtest/chart_vol_decile.png)
 
 ### 5. Not tuned to a lucky window
 
-ρ moves 42.5% → 58.6% across a 60× horizon range and the k × θ_min sensitivity grid is
-smooth and monotone with no cliffs. Honest note: θ_min dominates k on this tape (θ_min 3→12
-cuts the clawback ~70%; k 1.5→6.0 cuts it ~23%) — §4 above is where the k term earns its
-keep. ![horizon](backtest/chart_horizon.png)
+ρ moves 31.5% → 60.6% across a 60× horizon range and the k × θ_min sensitivity grid is
+smooth and monotone with no cliffs. Honest note: θ_min still dominates k on this tape (θ_min
+3→12 cuts the clawback ~64%; k 0.7→5.6 cuts it ~50%). ![horizon](backtest/chart_horizon.png)
 
 ## Partner integrations
 
 - **Unichain** — the mechanism is flashblock-native: settlement windows are measured on **Uniswap's official FlashblockNumber contract** (live builder-maintained proxies: mainnet [`0x3c3a…1ec3→proxy 0x3c3a8a41e095c76b03f79f70955fff3b03cf753e`], Sepolia [`0x056466f1a50a6B5e4DCCF106074ee0083D721a42`] — verified ticking at 200ms cadence). To our knowledge this is the **first v4 hook to consume it**. Graceful `block.number` fallback + owner emergency switch if builder infra ever halts; `src/OperatedFlashblockNumber.sol` mirrors the official V1 allowlist pattern as a contingency. Fork tests run the full cycle against the **real Unichain Sepolia PoolManager**.
 
-- **Reactive Network** — **live and verified end-to-end.** An RSC on Reactive Lasna (`src/integrations/reactive/HindsightReactive.sol`, deployed `0x163C7077F4480EB3315479bdf5831051DD91160a`) subscribes to the hook's `SwapRecorded` events on Unichain Sepolia plus Cron sweep/flush topics, and drives settlement through the official callback proxy into `HindsightCallback` (`0xD6e1F8D864D177ad55449aa4C4776e6709B8d8d3`). The current v4 deployment settles autonomously ~60s after the swap (10s maturity + 5s window + RSC latency); the first such settlement we captured a tx hash for was on the v1 bytecode, when the horizon was shorter: `0xacc2cf71beba00a94862f41aafe62d185fb93d30eabcc4d1c68db029d86b11c4` (29s). Settlement liveness without any operated infrastructure.
+- **Reactive Network** — **live and verified end-to-end.** An RSC on Reactive Lasna (`src/integrations/reactive/HindsightReactive.sol`, deployed `0xC971B9073E118DF50FAE99FeFa7EeEaEEe32C1fC`) subscribes to the hook's `SwapRecorded` events on Unichain Sepolia plus Cron sweep/flush topics, and drives settlement through the official callback proxy into `HindsightCallback` (`0x7d7Bf00f54648944Cafc336F357934f8F8994d76`). The current v4 deployment settles autonomously ~60s after the swap (10s maturity + 5s window + RSC latency); the first such settlement we captured a tx hash for was on the v1 bytecode, when the horizon was shorter: `0xacc2cf71beba00a94862f41aafe62d185fb93d30eabcc4d1c68db029d86b11c4` (29s). Settlement liveness without any operated infrastructure.
 
-- **Chainlink Automation** — `src/integrations/chainlink/HindsightUpkeep.sol` deployed on Base Sepolia (`0xc8d20Aaa0436B7F0370Eda41c4Aa4064bDec7E9a`) against a second, chain-identical hook deployment (`0x1f4BdB8C84613aB9533bB473Cdef51182BB750c4`, running the hook's `block.number` fallback clock): three-mode conditional upkeep (settle/flush/poke), forwarder-gated, **three upkeeps registered programmatically against the live v2.3 registrar** (the web UI is deprecated to withdraw-only; we encoded the v2.3 `RegistrationParams` incl. `billingToken` by hand), auto-approved, LINK-funded, forwarders wired on-chain. This leg also proves the **fallback clock end-to-end on a chain with no flashblocks**: a live retail swap stamped at `461731830` (a `block.number × 10` stamp), `checkUpkeep(settle)` flipping false→true on-chain as the window closed, and `settle(0)` returning the full bond — tx `0x9984206868526b036a5e8bd6932063a2d3cbde1047fb01eef43cbd21b521796c`. Full transparency: Chainlink sunset classic-Automation testnet execution in mid-2026 and the Base Sepolia DON currently performs nothing for anyone (30h registry scan: zero `UpkeepPerformed` events) — so the perform path is proven by the fork suite executing the complete check→perform→refund cycle against the real Base Sepolia PoolManager (reproduce: `BASE_SEPOLIA_RPC_URL=<rpc> forge test --mc BaseSepoliaFork -vv`, ~13s; without an RPC the fork tests SKIP loudly rather than passing silently).
+- **Chainlink Automation** — `src/integrations/chainlink/HindsightUpkeep.sol` deployed on Base Sepolia (`0x38dED78f1ec799C5178aC1e16821aB2aB35B6893`) against a second, chain-identical hook deployment (`0xc60C0be68D02BD38Bc8aF44cf71D157C904950c4`, running the hook's `block.number` fallback clock): three-mode conditional upkeep (settle/flush/poke), forwarder-gated, **three upkeeps registered programmatically against the live v2.3 registrar** (the web UI is deprecated to withdraw-only; we encoded the v2.3 `RegistrationParams` incl. `billingToken` by hand), auto-approved, LINK-funded, forwarders wired on-chain. This leg also proves the **fallback clock end-to-end on a chain with no flashblocks**: a live retail swap stamped at `461731830` (a `block.number × 10` stamp), `checkUpkeep(settle)` flipping false→true on-chain as the window closed, and `settle(0)` returning the full bond — tx `0x9984206868526b036a5e8bd6932063a2d3cbde1047fb01eef43cbd21b521796c`. Full transparency: Chainlink sunset classic-Automation testnet execution in mid-2026 and the Base Sepolia DON currently performs nothing for anyone (30h registry scan: zero `UpkeepPerformed` events) — so the perform path is proven by the fork suite executing the complete check→perform→refund cycle against the real Base Sepolia PoolManager (reproduce: `BASE_SEPOLIA_RPC_URL=<rpc> forge test --mc BaseSepoliaFork -vv`, ~13s; without an RPC the fork tests SKIP loudly rather than passing silently).
 
 See `DEPLOYMENTS.md` for all addresses and proof transactions.
 
@@ -262,7 +270,7 @@ git clone https://github.com/OoJae/hindsight-hook && cd hindsight-hook
 git submodule update --init lib/reactive-lib lib/v4-hooks-public
 git -C lib/v4-hooks-public submodule update --init --recursive lib/v4-core lib/v4-periphery
 git -C lib/v4-hooks-public submodule update --init lib/openzeppelin-contracts lib/solady lib/forge-std
-forge test                                   # 118 tests: unit, integration, invariant
+forge test                                   # 128 tests: unit, integration, invariant
 forge test --match-path 'test/fork/*'        # +5 fork tests (needs an RPC; SKIPs loudly without one)
 forge test --mc UnichainSepoliaFork -vv      # fork suite vs real Unichain Sepolia state
 forge test --gas-report
@@ -287,12 +295,17 @@ cd bot && npm i && npm start                 # keeper: poke/settle/flush
 - Hook permission bits validated against implementation (`Hooks.validateHookPermissions`)
 - `settle()` opens its own `unlock` — cannot be reentered from inside any swap (v4 lock)
 - Callback authenticated to the PoolManager; verdicts computed only from finalized windows
+- **θ cannot be moved by the trade it prices.** It is measured over `[exec−600, exec−1]` — a
+  window that has already closed when the swap lands — and is snapshotted into the swap record
+  at execution, so nothing afterwards can move it. The regression test asserts that padding
+  the settlement window changes θ by *exactly zero*. Through v6, θ came from the settlement
+  window itself, and 927 real swaps on the mainnet tape were acquitted by their own companion
+  prints (§4). Absent trailing data leaves θ at its floor — fail-shut, deliberately: failing
+  open would let a trader wait out a quiet period and be acquitted unconditionally.
 - **θ's volatility input is clamped harder than the TWAP's** (10 ticks vs 60). The two clamps
   defend opposite parties: the TWAP's loose clamp protects the *trader* from a manipulated
-  settlement price, while θ's tight clamp protects the *LPs* from a trader padding their own
-  settlement window with round trips. Unclamped, that vector drove θ to 171 ticks — above the
-  entire realistic markout distribution (max 110, p99 = 15 across 55,822 real swaps), which
-  acquits everything (round-2 audit M4).
+  settlement price, while θ's tight clamp protects the *LPs*. This mattered more when θ was
+  writable by the trade; it is retained as defence in depth.
 - TWAP: time-weighted with per-observation jump clamping; bond capped at the linearized cost of moving the pool by the toxicity threshold (`bond ≤ κ·L_active·θ`) so manipulation is never +EV — thin pools degrade toward a plain low-fee pool; range-exiting fills pay the standard bond (max realized price move = max markout exposure)
 - Rounding: forfeits round down, refunds get the remainder (trader-favoring on dust)
 - Invariant-tested: escrowed claims ≡ pending bonds; hook custody ≡ donation pot
@@ -334,36 +347,35 @@ was run against this codebase **twice**, and every surviving finding has an exec
 committed *before* its fix, in `test/integration/AuditRepro.t.sol`,
 `test/integration/AuditRepro2.t.sol` and `test/integration/EvictionExploit.t.sol`.
 
-Round 1's fixes are the v3 deployment; two of its four headline claims did not reproduce
-under our own repro tests and were **dropped rather than "fixed"**. Round 2 found eight more,
-including a critical (buffer eviction let a toxic trade buy a full refund), a silent 25 bps
-skim by anyone building the calldata, and an owner retune that could confiscate every
-in-flight bond — plus a headline number of ours that did not survive its own null test. All
-are closed in v6 and tabulated with their fixes in `DEPLOYMENTS.md`.
+Round 1's fixes are v3; two of its four headline claims did not reproduce under our own repro
+tests and were **dropped rather than "fixed"**. Round 2 found eight more, including a critical
+(buffer eviction let a toxic trade buy a full refund), a silent 25 bps skim by anyone building
+the calldata, and an owner retune that could confiscate every in-flight bond. A ninth came
+from neither audit — we found it by *running* the thing: a stalled keeper lane auto-forfeited
+five swaps whose verdicts had already been finalized benign. All are tabulated with their
+fixes in `DEPLOYMENTS.md`.
 
-A ninth came from neither audit: **we found it by running the thing.** The Reactive lane
-stalled for thirty minutes on the v5 deployment, and five swaps whose windows had already
-been *finalized benign* were auto-forfeited in full, because the verdict logic checked the
-grace deadline before consulting the finalized snapshot. Honest traders lost their entire
-bond for a keeper being late. Fixed in v6, with the anti-escape property now carried by the
-precise mechanism — a window whose data was *destroyed* still forfeits — rather than by a
-blunt clock.
-
-Two of the round-2 findings are worth reading in full even though they are closed, because
-the honest version is more useful than the tidy one: §4 above publishes the case where our
-own live demo inverts the pitch, and Future Work below names the structural change that
-would remove the cause rather than bound it.
+The tenth is the one worth reading. Round 2's M9 pointed out that our own live demo inverted
+the pitch — largest markout acquitted, smaller ones convicted — because θ and the markout
+shared a window. v6 *bounded* that. When we went back to remove it properly, the measurement
+said something harder to hear: the volatility term as we had sourced it was **making the
+classifier worse**, and 927 real swaps on the mainnet tape had been acquitted by their own
+companion prints. §4 has the full adjudication, including the one axis on which the old
+version still wins. Fixed at the root in v7, and asserted as an equality rather than a bound.
 
 ## Future work
 
 - Production router with `IMsgSender` attribution and bond-aware `minAmountOut` (the demo router is v4-core's `PoolSwapTest` + `hookData` beneficiary passthrough, which the hook's `IMsgSender` fallback also supports)
-- **Decouple θ's volatility window from the markout window**, so the drift being scored can
-  no longer raise its own threshold. Today both are measured over `[exec+N, exec+N+W]`, which
-  on a thin tape lets a burst's own companion prints acquit its early trades (see §4). The
-  clamp bounds the damage; separating the windows would remove the coupling entirely. The
-  obvious alternative — a lagged *pre-trade* volatility window — is rejected: it has no data
-  for the first swaps into a pool or after any quiet period, collapsing θ to its floor and
-  confiscating benign flow, which is the failure mode the vol-scaling exists to prevent.
+- ~~Decouple θ's volatility window from the markout window~~ — **done in v7** (see §4). The
+  concern that a lagged pre-trade window would have no data after a quiet period, collapsing
+  θ to its floor, was worth taking seriously; measured incidence is **2.9%** of swaps, and
+  that failure direction is the safe one (an adversary who could empty their trailing window
+  gets a *lower* threshold, not a free pass). θ is now at its floor for 2.9% of swaps rather
+  than 68.2% — the term is finally active for nearly every trade instead of one in three.
+- Recover the top-decile false-positive protection that the trailing σ gives up (§4). A
+  longer or regime-aware lookback is the obvious candidate; the 30s–1800s sweep in
+  `compare.py` moved it very little, so this likely needs a different estimator, not a
+  different window length.
 - Time-weighted **median** settlement TWAP (current: jump-clamped time-weighted average)
 - Cross-pool portable reputation via an attested registry; fast-lane flat-fee opt-out
 

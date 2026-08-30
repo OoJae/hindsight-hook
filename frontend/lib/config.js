@@ -13,9 +13,11 @@ export const POOL_KEY = {
   hooks: HOOK,
 };
 
-// keep in sync with HindsightParams defaults
-export const MATURITY = 15;
-export const WINDOW = 10;
+// The LIVE pool parameters, as set by script/02 at deploy time (not the contract's
+// _defaultParams, which is what these used to mirror — they had been stale since the
+// horizon moved to 10s+5s).
+export const MATURITY = 50;   // 10s at 200ms flashblocks
+export const WINDOW = 25;     // 5s settlement window
 
 export const hookAbi = [
   { type: "function", name: "currentStamp", stateMutability: "view", inputs: [], outputs: [{ type: "uint48" }] },

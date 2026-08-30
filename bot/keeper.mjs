@@ -41,8 +41,8 @@ const poolKey = {
 };
 const POOL_ID = process.env.POOL_ID;
 
-// N + W from default params — keep in sync with HindsightParams
-const MATURITY = 15, WINDOW = 10;
+// N + W as set by script/02 on the live pools (10s maturity + 5s window at 200ms stamps)
+const MATURITY = 50, WINDOW = 25;
 const genesis = Date.now();
 
 
