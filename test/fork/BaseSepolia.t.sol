@@ -56,7 +56,7 @@ contract BaseSepoliaFork is Test {
         );
         // FlashblockNumber = address(0) ⇒ block.number fallback clock
         deployCodeTo(
-            "HindsightHook.sol", abi.encode(POOL_MANAGER, IFlashblockNumber(address(0)), uint256(10)), flags
+            "HindsightHook.sol", abi.encode(POOL_MANAGER, IFlashblockNumber(address(0)), uint256(10), address(this)), flags
         );
         hook = HindsightHook(payable(flags));
 

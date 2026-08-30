@@ -60,7 +60,7 @@ contract UnichainSepoliaFork is Test {
         );
         deployCodeTo(
             "HindsightHook.sol",
-            abi.encode(POOL_MANAGER, IFlashblockNumber(FLASHBLOCKS), uint256(10)),
+            abi.encode(POOL_MANAGER, IFlashblockNumber(FLASHBLOCKS), uint256(10), address(this)),
             flags
         );
         hook = HindsightHook(payable(flags));

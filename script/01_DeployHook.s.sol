@@ -22,7 +22,9 @@ contract DeployHook is Script {
             Hooks.AFTER_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
                 | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG
         );
-        bytes memory ctorArgs = abi.encode(poolManager, IFlashblockNumber(flashblocks), uint256(10));
+        address hookOwner = vm.addr(pk);
+        bytes memory ctorArgs =
+            abi.encode(poolManager, IFlashblockNumber(flashblocks), uint256(10), hookOwner);
 
         (address hookAddress, bytes32 salt) =
             HookMiner.find(CREATE2_DEPLOYER, flags, type(HindsightHook).creationCode, ctorArgs);
@@ -30,10 +32,11 @@ contract DeployHook is Script {
 
         vm.startBroadcast(pk);
         HindsightHook hook =
-            new HindsightHook{salt: salt}(poolManager, IFlashblockNumber(flashblocks), 10);
+            new HindsightHook{salt: salt}(poolManager, IFlashblockNumber(flashblocks), 10, hookOwner);
         vm.stopBroadcast();
 
         require(address(hook) == hookAddress, "address mismatch");
         console2.log("HindsightHook deployed:", address(hook));
+        console2.log("owner:", hookOwner);
     }
 }

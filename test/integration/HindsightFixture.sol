@@ -42,7 +42,7 @@ contract HindsightFixture is Test, Deployers {
             ) ^ (0x4444 << 144)
         );
         deployCodeTo(
-            "HindsightHook.sol", abi.encode(manager, IFlashblockNumber(address(fb)), uint256(10)), flags
+            "HindsightHook.sol", abi.encode(manager, IFlashblockNumber(address(fb)), uint256(10), address(this)), flags
         );
         hook = HindsightHook(payable(flags));
 

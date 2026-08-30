@@ -149,12 +149,19 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     mapping(PoolId => PendingDonation) public pendingDonations;
 
     // ────────────────────────────────── lifecycle ──────────────────────────────────
-    constructor(IPoolManager _manager, IFlashblockNumber _flashblockNumber, uint256 _fallbackStampsPerBlock)
-        BaseHook(_manager)
-    {
+    /// @param _owner explicit owner. NOT `msg.sender`: hooks are deployed through the CREATE2
+    ///        factory to mine their permission-bit address, so `msg.sender` here is the
+    ///        factory — which would leave `setParams`/`setTrustedRouter`/ownership
+    ///        permanently unreachable.
+    constructor(
+        IPoolManager _manager,
+        IFlashblockNumber _flashblockNumber,
+        uint256 _fallbackStampsPerBlock,
+        address _owner
+    ) BaseHook(_manager) {
         flashblockNumber = _flashblockNumber;
         fallbackStampsPerBlock = _fallbackStampsPerBlock == 0 ? 10 : _fallbackStampsPerBlock;
-        owner = msg.sender;
+        owner = _owner == address(0) ? msg.sender : _owner;
     }
 
     receive() external payable {}

@@ -45,7 +45,7 @@ contract DeltaSignsSpike is Test, Deployers {
         );
         deployCodeTo(
             "HindsightHook.sol",
-            abi.encode(manager, IFlashblockNumber(address(fb)), uint256(10)),
+            abi.encode(manager, IFlashblockNumber(address(fb)), uint256(10), address(this)),
             flags
         );
         hook = HindsightHook(payable(flags));
