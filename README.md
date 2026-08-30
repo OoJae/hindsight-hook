@@ -43,7 +43,7 @@ The newest generation of defenses (priority-fee MEV taxes à la Angstrom L2 / Ba
 - **Markout** — signed post-trade drift in tick space (1 tick ≈ 1bp), measured against a **finalized** window: the verdict is a pure read; there is nothing to sandwich at settlement.
 - **θ = θ_min + k·σ** — the toxicity threshold breathes with realized volatility, so trending markets don't confiscate benign momentum flow. *We tax information, not volatility.*
 - **Bond** = 25bps of notional × reputation multiplier. New addresses pay full freight (discounts are **earned** through settled benign history — Sybil-proof); addresses caught extracting pay up to 3×; whales get no discount above a size tier (no reputation laundering).
-- **Forfeits drip** to LPs via `donate()` on an epoch schedule — no lump a JIT LP could snipe.
+- **Forfeits drip** to LPs via `donate()` on an epoch schedule, which *bounds* JIT sniping rather than hand-waving it away: measured in `test/integration/LPSet.t.sol`, a JIT LP that adds matching liquidity, triggers the flush and exits captures **15% of the pot** (one epoch's release × its liquidity share), while a durable in-range LP earns **5.3× more** across the following epochs. A lump donation would have handed that sniper 100%.
 - **Missing data ⇒ refund** (withholding observations can never punish a trader), but **unsettled bonds auto-forfeit after a grace period** (waiting out the observation buffer is not an escape hatch).
 - Reverted transactions never land, never post bonds, never enter the measurement — the revert-spam attack that defeats ex-ante taxes simply does not apply.
 
@@ -160,7 +160,7 @@ git clone https://github.com/OoJae/hindsight-hook && cd hindsight-hook
 git submodule update --init lib/reactive-lib lib/v4-hooks-public
 git -C lib/v4-hooks-public submodule update --init --recursive lib/v4-core lib/v4-periphery
 git -C lib/v4-hooks-public submodule update --init lib/openzeppelin-contracts lib/solady lib/forge-std
-forge test                                   # 98 tests: unit, integration, invariant
+forge test                                   # 101 tests: unit, integration, invariant
 forge test --match-path 'test/fork/*'        # +5 fork tests (needs an RPC; SKIPs loudly without one)
 forge test --mc UnichainSepoliaFork -vv      # fork suite vs real Unichain Sepolia state
 forge test --gas-report
