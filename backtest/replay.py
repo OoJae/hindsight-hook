@@ -26,6 +26,7 @@ N_SEC, W_SEC = 3, 2          # 15 + 10 flashblocks at 200ms
 THETA_MIN = 3.0              # ticks ≈ bps
 THETA_VOL_K = 2.8
 RAMP = 20.0
+MAX_JUMP = 60.0              # per-observation contribution cap (matches the hook)
 USDC_DECIMALS = 1e6          # token1 = USDC
 
 def load(path):
@@ -35,6 +36,8 @@ def load(path):
         for k in ("block", "tick", "amount0", "amount1", "fee"):
             r[k] = int(r[k])
     return rows
+
+CLAMP = True  # apply the hook's jump clamp to the volatility input (theta)
 
 def twap_and_vol(swaps, i, start, end):
     """Time-weighted avg tick + mean |jump| over [start, end] (block seconds),
@@ -51,7 +54,8 @@ def twap_and_vol(swaps, i, start, end):
         t = swaps[j]["block"]
         weighted += prev_tick * (t - seg_start)
         duration += t - seg_start
-        jumps.append(abs(swaps[j]["tick"] - prev_tick))
+        jump = abs(swaps[j]["tick"] - prev_tick)
+        jumps.append(min(jump, MAX_JUMP) if CLAMP else jump)
         prev_tick, seg_start = swaps[j]["tick"], t
         j += 1
     weighted += prev_tick * (end - seg_start)

@@ -61,7 +61,19 @@ The newest generation of defenses (priority-fee MEV taxes à la Angstrom L2 / Ba
 
 ## Sustainable liquidity, quantified — on real mainnet flow
 
-`backtest/` replays **7 days of real Unichain mainnet ETH/USDC swaps** through the exact on-chain markout logic (block-granular offline; the hook itself is 200ms-granular — conservative):
+`backtest/` replays **7 days of real Unichain mainnet ETH/USDC swaps** through the on-chain
+markout logic — same markout formula, same volatility-scaled θ, same linear forfeit ramp, and
+the same ±60-tick jump clamp. Two on-chain features are deliberately *not* modelled, both of
+which make the figures below conservative or neutral rather than flattering:
+
+| divergence | measured effect |
+|---|---|
+| jump clamp on the θ input | **$0.00** — implemented and compared; only ~4 of 55,822 jumps exceed 60 ticks |
+| liquidity-scaled bond cap | never binds on this pool (max bond ÷ cap ≈ 0.1), so it cannot inflate the result |
+| reputation multiplier | not modelled; it would **raise** the clawback (repeat extractors would post up to 3× bonds) |
+
+Timing is block-granular offline while the hook is 200ms-granular on Unichain — also conservative.
+
 
 | ETH/USDC 5bp pool, 7 days | |
 |---|---|
@@ -110,8 +122,10 @@ test/
 
 ## Run it
 
-Measured gas (Foundry, `test/integration/Gas.t.sol`): swap+router+hook ≈ 313k total,
-settle refund ≈ 91k, settle forfeit incl. donation flush ≈ 214k, poke ≈ 29k — cents on an L2.
+Measured steady-state gas (`forge test --mt test_gas_numbers -vv`): swap incl. hook + test
+router ≈ 224k, settle refund ≈ 41k, settle forfeit incl. the donation drip ≈ 219k, poke ≈ 29k
+— cents on an L2. (Measured after warm-up, so one-time funding/cold-storage costs are not
+billed to them.)
 
 ```bash
 git clone https://github.com/OoJae/hindsight-hook && cd hindsight-hook
