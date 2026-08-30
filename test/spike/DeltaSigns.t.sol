@@ -67,6 +67,10 @@ contract DeltaSignsSpike is Test, Deployers {
     }
 
     function _swap(bool zeroForOne, int256 amountSpecified) internal returns (BalanceDelta delta) {
+        // Set tx.origin as well as msg.sender: the hook only honours a hookData beneficiary
+        // that IS tx.origin, so that a solver building the calldata cannot redirect a refund
+        // funded out of someone else's swap output (round-2 audit M5).
+        vm.prank(address(this), address(this));
         delta = swapRouter.swap(
             key,
             SwapParams({

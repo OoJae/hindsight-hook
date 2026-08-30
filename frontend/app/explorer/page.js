@@ -86,17 +86,21 @@ export default function Explorer() {
       const inc = usd * (c * vol) / 1e4;
       if (f > 0) dynTox += inc; else dynBen += inc;
     }
+    // A horizon whose window is too narrow to contain an interior observation has zero
+    // realized volatility everywhere. The dynamic-fee bisection is then constant in c, and
+    // every derived share is 0/0. Report that honestly rather than rendering NaN.
+    const dynDegenerate = !(dynBen + dynTox > 0) || !(sumVolUsd > 0);
     return {
-      n, fees, claw, grossAS, netMarkout, toxN,
-      rho: 100 * claw / grossAS,
-      lvrX: Math.abs(claw / netMarkout),
-      pctFees: 100 * claw / fees,
+      n, fees, claw, grossAS, netMarkout, toxN, dynDegenerate,
+      rho: grossAS > 0 ? 100 * claw / grossAS : null,
+      lvrX: netMarkout !== 0 ? Math.abs(claw / netMarkout) : null,
+      pctFees: fees > 0 ? 100 * claw / fees : null,
       toxPct: 100 * toxN / n,
-      benignEff: 1e4 * benFee / benUsd,
-      toxicEff: 1e4 * (toxFee + toxForfeit) / toxUsd,
-      dynC: c,
-      dynBenignShare: 100 * dynBen / (dynBen + dynTox),
-      dynBenignEff: HEADLINE_BPS + c * (sumVolUsd / (benUsd + toxUsd)),
+      benignEff: benUsd > 0 ? 1e4 * benFee / benUsd : null,
+      toxicEff: toxUsd > 0 ? 1e4 * (toxFee + toxForfeit) / toxUsd : null,
+      dynC: dynDegenerate ? null : c,
+      dynBenignShare: dynDegenerate ? null : 100 * dynBen / (dynBen + dynTox),
+      dynBenignEff: dynDegenerate ? null : HEADLINE_BPS + c * (sumVolUsd / (benUsd + toxUsd)),
     };
   }, [data, thetaMin, k, ramp, bondBps, hz]);
 
@@ -107,6 +111,8 @@ export default function Explorer() {
   if (!stats) return <div className="card">Loading 55,822 real mainnet swaps…</div>;
 
   const f0 = (x) => `$${x.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  // null == the statistic is undefined at this slider position (see dynDegenerate).
+  const fx = (x, d = 1, suffix = "") => (x == null ? "n/a" : x.toFixed(d) + suffix);
 
   return (
     <>
@@ -144,7 +150,7 @@ export default function Explorer() {
                     onChange={setRamp} note="markout beyond θ+ramp forfeits the full bond" />
             <Slider label="bond (bps of notional)" value={bondBps} min={5} max={100} step={5}
                     onChange={setBondBps} />
-            <Slider label="settlement horizon" value={hz} min={0} max={5} step={1}
+            <Slider label="settlement horizon" value={hz} min={1} max={5} step={1}
                     onChange={setHz} fmt={(v) => HORIZON_LABELS[v]}
                     note="maturity + TWAP window" />
           </div>
@@ -153,22 +159,22 @@ export default function Explorer() {
         <div style={{ flex: "1 1 380px" }}>
           <div className="card">
             <div className="muted">ρ — share of realized adverse selection recovered</div>
-            <div className="big ok">{stats.rho.toFixed(1)}%</div>
+            <div className="big ok">{fx(stats.rho, 1, "%")}</div>
             <div className="muted">
-              {f0(stats.claw)} clawed back of {f0(stats.grossAS)} — {stats.lvrX.toFixed(1)}× the
-              pool's net LVR bleed, and +{stats.pctFees.toFixed(1)}% on {f0(stats.fees)} of fees
+              {f0(stats.claw)} clawed back of {f0(stats.grossAS)} — {fx(stats.lvrX, 1, "×")} the
+              pool's net LVR bleed, and +{fx(stats.pctFees, 1, "%")} on {f0(stats.fees)} of fees
             </div>
           </div>
           <div className="card">
             <div className="muted">who pays, at identical LP revenue</div>
             <table>
               <tbody>
-                <tr><td>benign flow — Hindsight</td><td><b className="ok">{stats.benignEff.toFixed(2)} bps</b></td></tr>
-                <tr><td>toxic flow — Hindsight</td><td><b className="bad">{stats.toxicEff.toFixed(2)} bps</b></td></tr>
-                <tr><td className="muted">revenue-matched dynamic fee</td><td className="muted">5 + {stats.dynC.toFixed(2)}·σ bps</td></tr>
+                <tr><td>benign flow — Hindsight</td><td><b className="ok">{fx(stats.benignEff, 2, " bps")}</b></td></tr>
+                <tr><td>toxic flow — Hindsight</td><td><b className="bad">{fx(stats.toxicEff, 2, " bps")}</b></td></tr>
+                <tr><td className="muted">revenue-matched dynamic fee</td><td className="muted">{stats.dynC == null ? "n/a — no realized vol at this horizon" : `5 + ${stats.dynC.toFixed(2)}·σ bps`}</td></tr>
                 <tr>
                   <td>…its incremental revenue from <b>benign</b> flow</td>
-                  <td><b className="bad">{stats.dynBenignShare.toFixed(1)}%</b></td>
+                  <td><b className="bad">{fx(stats.dynBenignShare, 1, "%")}</b></td>
                 </tr>
                 <tr><td>…Hindsight's, from benign flow</td><td><b className="ok">0.0%</b></td></tr>
               </tbody>

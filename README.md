@@ -12,7 +12,7 @@ Built for the **UHI10 Hookathon** (theme: *Sustainable Liquidity & MEV Protectio
 **🔗 Live app (Unichain Sepolia): https://oojae.github.io/hindsight-hook/**
 **🔬 Interactive evidence: https://oojae.github.io/hindsight-hook/explorer/** — re-prices all
 55,822 real mainnet swaps *in your browser* under any parameters you choose. Try to break it.
-**Hook:** `0xcEC97e16765395c6F1Af849625b21b4a532110c4` · all addresses in [`DEPLOYMENTS.md`](DEPLOYMENTS.md) — watch the real
+**Hook:** `0x4475d1A77cb15f7867A37877B3f59E9a847990C4` · all addresses in [`DEPLOYMENTS.md`](DEPLOYMENTS.md) — watch the real
 flashblock counter tick, get a bond quote, and see live settlements incl. an actual toxic
 forfeit. Connect any wallet on Unichain Sepolia to swap ("Mint demo tokens" gives you balance).
 
@@ -163,21 +163,24 @@ the result strengthens:
 
 ### 4. We tax information, not volatility
 
-It is not only a backtest result — it is visible in the live deployment. An 8-swap arb
-burst on Unichain Sepolia settled autonomously, and the verdicts split like this:
+**First, a limitation we found by auditing our own live demo.** The 8-swap arb burst on
+Unichain Sepolia settles with θ = 31 for swaps #1–#5 (all refunded, markout 20–27) and θ = 3
+for #6–#7 (both forfeited, markout 20 and 10). The largest markout is acquitted and smaller
+ones convicted, because θ and the markout are measured over *the same window*: the burst's
+own companion prints land inside the early swaps' windows and lift their threshold. On a
+9-print demo tape that is a timing artifact, not classification — and we would rather say so
+than let it read as the mechanism working.
 
-| swap | markout | θ | verdict |
-|---|---|---|---|
-| #1–#5 | 22–27 ticks | **31** | refunded — the burst's own violence raised θ above its markout |
-| **#6** | 20 ticks | **3** | **forfeited** |
-| **#7** | 10 ticks | **3** | **forfeited** |
-| #8 | 0 ticks | 3 | refunded |
+On the real 55,822-swap tape it does not behave that way. θ sits at its floor (3 ticks) for
+**68.2%** of swaps and never exceeds **32.4**, and conviction is monotone in markout: every
+swap with markout ≥ 20 ticks is convicted at every θ level. The pathology needs a window
+dense with other prints, which is a thin-tape condition. It is still a real edge — an
+adversary who can pad their own window raises their own threshold — so it is capped in the
+mechanism (θ can no longer be driven past 31, where it previously reached 171) and listed in
+Future Work: *decouple the θ volatility
+window from the markout window, so the drift being scored cannot raise its own threshold.*
 
-Same trader, same direction, same size. During the loud part of the burst the threshold
-rises and the pool declines to confiscate; once the tape is quiet again and the price has
-*stayed* where the arb pushed it, that persistence is the informational signature and those
-trades forfeit. (Addresses and the on-chain reads are in `DEPLOYMENTS.md`.) The backtest
-below measures the same behaviour across 55,822 swaps:
+With that said, here is the property measured at scale:
 
 The threshold θ scales with short-horizon realized volatility, so a violent-but-uninformed
 tape does not get confiscated. To show that term is doing real work, we calibrate a *static*
@@ -208,9 +211,9 @@ keep. ![horizon](backtest/chart_horizon.png)
 
 - **Unichain** — the mechanism is flashblock-native: settlement windows are measured on **Uniswap's official FlashblockNumber contract** (live builder-maintained proxies: mainnet [`0x3c3a…1ec3→proxy 0x3c3a8a41e095c76b03f79f70955fff3b03cf753e`], Sepolia [`0x056466f1a50a6B5e4DCCF106074ee0083D721a42`] — verified ticking at 200ms cadence). To our knowledge this is the **first v4 hook to consume it**. Graceful `block.number` fallback + owner emergency switch if builder infra ever halts; `src/OperatedFlashblockNumber.sol` mirrors the official V1 allowlist pattern as a contingency. Fork tests run the full cycle against the **real Unichain Sepolia PoolManager**.
 
-- **Reactive Network** — **live and verified end-to-end.** An RSC on Reactive Lasna (`src/integrations/reactive/HindsightReactive.sol`, deployed `0xF065d60db3aE5372BcC16c57D520aADd3116718A`) subscribes to the hook's `SwapRecorded` events on Unichain Sepolia plus Cron sweep/flush topics, and drives settlement through the official callback proxy into `HindsightCallback` (`0xb8d4CE44e1BaB3B712daE6568B51f9B7F85Fe9E8`). The current v4 deployment settles autonomously ~60s after the swap (10s maturity + 5s window + RSC latency); the first such settlement we captured a tx hash for was on the v1 bytecode, when the horizon was shorter: `0xacc2cf71beba00a94862f41aafe62d185fb93d30eabcc4d1c68db029d86b11c4` (29s). Settlement liveness without any operated infrastructure.
+- **Reactive Network** — **live and verified end-to-end.** An RSC on Reactive Lasna (`src/integrations/reactive/HindsightReactive.sol`, deployed `0x163C7077F4480EB3315479bdf5831051DD91160a`) subscribes to the hook's `SwapRecorded` events on Unichain Sepolia plus Cron sweep/flush topics, and drives settlement through the official callback proxy into `HindsightCallback` (`0xD6e1F8D864D177ad55449aa4C4776e6709B8d8d3`). The current v4 deployment settles autonomously ~60s after the swap (10s maturity + 5s window + RSC latency); the first such settlement we captured a tx hash for was on the v1 bytecode, when the horizon was shorter: `0xacc2cf71beba00a94862f41aafe62d185fb93d30eabcc4d1c68db029d86b11c4` (29s). Settlement liveness without any operated infrastructure.
 
-- **Chainlink Automation** — `src/integrations/chainlink/HindsightUpkeep.sol` deployed on Base Sepolia (`0xDED9BF5E6bE87A82bDa4f9C268efe066FfADb468`) against a second, chain-identical hook deployment (`0xdE2C8325275E86B61F9BA3b413cc43a905ba90C4`, running the hook's `block.number` fallback clock): three-mode conditional upkeep (settle/flush/poke), forwarder-gated, **three upkeeps registered programmatically against the live v2.3 registrar** (the web UI is deprecated to withdraw-only; we encoded the v2.3 `RegistrationParams` incl. `billingToken` by hand), auto-approved, LINK-funded, forwarders wired on-chain. This leg also proves the **fallback clock end-to-end on a chain with no flashblocks**: a live retail swap stamped at `461731830` (a `block.number × 10` stamp), `checkUpkeep(settle)` flipping false→true on-chain as the window closed, and `settle(0)` returning the full bond — tx `0x9984206868526b036a5e8bd6932063a2d3cbde1047fb01eef43cbd21b521796c`. Full transparency: Chainlink sunset classic-Automation testnet execution in mid-2026 and the Base Sepolia DON currently performs nothing for anyone (30h registry scan: zero `UpkeepPerformed` events) — so the perform path is proven by the fork suite executing the complete check→perform→refund cycle against the real Base Sepolia PoolManager (reproduce: `BASE_SEPOLIA_RPC_URL=<rpc> forge test --mc BaseSepoliaFork -vv`, ~13s; without an RPC the fork tests SKIP loudly rather than passing silently).
+- **Chainlink Automation** — `src/integrations/chainlink/HindsightUpkeep.sol` deployed on Base Sepolia (`0xc8d20Aaa0436B7F0370Eda41c4Aa4064bDec7E9a`) against a second, chain-identical hook deployment (`0x1f4BdB8C84613aB9533bB473Cdef51182BB750c4`, running the hook's `block.number` fallback clock): three-mode conditional upkeep (settle/flush/poke), forwarder-gated, **three upkeeps registered programmatically against the live v2.3 registrar** (the web UI is deprecated to withdraw-only; we encoded the v2.3 `RegistrationParams` incl. `billingToken` by hand), auto-approved, LINK-funded, forwarders wired on-chain. This leg also proves the **fallback clock end-to-end on a chain with no flashblocks**: a live retail swap stamped at `461731830` (a `block.number × 10` stamp), `checkUpkeep(settle)` flipping false→true on-chain as the window closed, and `settle(0)` returning the full bond — tx `0x9984206868526b036a5e8bd6932063a2d3cbde1047fb01eef43cbd21b521796c`. Full transparency: Chainlink sunset classic-Automation testnet execution in mid-2026 and the Base Sepolia DON currently performs nothing for anyone (30h registry scan: zero `UpkeepPerformed` events) — so the perform path is proven by the fork suite executing the complete check→perform→refund cycle against the real Base Sepolia PoolManager (reproduce: `BASE_SEPOLIA_RPC_URL=<rpc> forge test --mc BaseSepoliaFork -vv`, ~13s; without an RPC the fork tests SKIP loudly rather than passing silently).
 
 See `DEPLOYMENTS.md` for all addresses and proof transactions.
 
@@ -239,7 +242,8 @@ test/
   spike/DeltaSigns.t.sol       bond delta math across ALL FOUR swap configs
   unit/                        fuzzed library tests
   integration/                 settlement, donation drip + LP accrual, reputation
-  integration/AuditRepro.t.sol      one regression test per surviving audit finding
+  integration/AuditRepro.t.sol      round-1 findings: one regression test each
+  integration/AuditRepro2.t.sol     round-2 findings M4-M7, plus M10 found live on-chain
   integration/EvictionExploit.t.sol the round-2 critical: exploit, then closure
   invariant/                   claims exactly back pending bonds; custody == pot
   fork/UnichainSepolia.t.sol   full cycle vs the REAL PoolManager + REAL flashblock counter
@@ -258,7 +262,7 @@ git clone https://github.com/OoJae/hindsight-hook && cd hindsight-hook
 git submodule update --init lib/reactive-lib lib/v4-hooks-public
 git -C lib/v4-hooks-public submodule update --init --recursive lib/v4-core lib/v4-periphery
 git -C lib/v4-hooks-public submodule update --init lib/openzeppelin-contracts lib/solady lib/forge-std
-forge test                                   # 109 tests: unit, integration, invariant
+forge test                                   # 118 tests: unit, integration, invariant
 forge test --match-path 'test/fork/*'        # +5 fork tests (needs an RPC; SKIPs loudly without one)
 forge test --mc UnichainSepoliaFork -vv      # fork suite vs real Unichain Sepolia state
 forge test --gas-report
@@ -283,40 +287,83 @@ cd bot && npm i && npm start                 # keeper: poke/settle/flush
 - Hook permission bits validated against implementation (`Hooks.validateHookPermissions`)
 - `settle()` opens its own `unlock` — cannot be reentered from inside any swap (v4 lock)
 - Callback authenticated to the PoolManager; verdicts computed only from finalized windows
+- **θ's volatility input is clamped harder than the TWAP's** (10 ticks vs 60). The two clamps
+  defend opposite parties: the TWAP's loose clamp protects the *trader* from a manipulated
+  settlement price, while θ's tight clamp protects the *LPs* from a trader padding their own
+  settlement window with round trips. Unclamped, that vector drove θ to 171 ticks — above the
+  entire realistic markout distribution (max 110, p99 = 15 across 55,822 real swaps), which
+  acquits everything (round-2 audit M4).
 - TWAP: time-weighted with per-observation jump clamping; bond capped at the linearized cost of moving the pool by the toxicity threshold (`bond ≤ κ·L_active·θ`) so manipulation is never +EV — thin pools degrade toward a plain low-fee pool; range-exiting fills pay the standard bond (max realized price move = max markout exposure)
 - Rounding: forfeits round down, refunds get the remainder (trader-favoring on dust)
 - Invariant-tested: escrowed claims ≡ pending bonds; hook custody ≡ donation pot
-- **Attribution is authenticated.** `hookData` is attacker-controlled, so it can direct a
-  refund (the payer's own money) but can never move someone else's reputation: reputation is
-  read/written only for self-attributed flow (`beneficiary == tx.origin`) or flow vouched by
-  a whitelisted router via `IMsgSender`. Unauthenticated flow pays the full default bond and
-  is reputation-neutral. (`tx.origin` is used purely as "did this address participate", never
-  as an authorization grant; AA wallets use the trusted-router path.)
-- **Owner powers are bounded.** `setParams` is read at settle time, so it is retroactive over
-  in-flight bonds — the bounds are what make that safe: keeper tip ≤ 10%, `grace ≥ window`,
-  `theta/ramp ≥ 1`, bond ≤ 100bps. The owner can never construct a universal forfeit or route
-  a bond to itself. Ownership is 2-step transferable, and is an explicit constructor argument
-  (hooks are deployed via the CREATE2 factory, so `msg.sender` would be the factory).
+- **The refund follows the money.** `hookData` is attacker-controlled, so it is honoured only
+  when the named beneficiary *is* `tx.origin`, or when a whitelisted router vouches for a user
+  via `IMsgSender`. Everything else refunds to `tx.origin`. An earlier version paid the
+  hookData address unconditionally, which let any solver or frontend that builds the calldata
+  skim the bond of a user who signed the transaction — the bond is withheld from the swap's
+  own output, so it is never the calldata author's money. The same version paid `sender` when
+  hookData was empty, stranding refunds inside routers whose call had long since ended. Both
+  are closed and regression-tested (round-2 audit M5).
+  *Known limitation:* for a relayed smart-contract-wallet swap, `tx.origin` is the relayer.
+  That path must register as a trusted router implementing `IMsgSender` — which is the same
+  requirement that already gets it proper reputation attribution.
+- **Reputation cannot be moved by a third party.** It is read/written only for authenticated
+  flow. Unauthenticated flow pays the full default bond and is reputation-neutral, so a fresh
+  address buys nothing. (`tx.origin` is used as "who signed this transaction", never as an
+  authorization grant.)
+- **Owner powers are bounded, including over time.** `setParams` is read at settle time, so it
+  is retroactive over in-flight bonds. The bounds are what make that safe: keeper tip ≤ 10%,
+  `grace ≥ window`, `theta/ramp ≥ 1`, bond ≤ 100bps, `θ_min ≤ 1000` (so the mechanism cannot
+  be switched off), and — new in v5 — **the settlement deadline `maturity + window + grace`
+  may only ever move later.** Without that ratchet the owner could collapse the deadline to
+  two stamps and auto-forfeit every escrowed bond at 100%, bypassing θ and the ramp entirely;
+  the test that claimed to disprove this asserted `assertGe(unsigned, 0)` and was vacuously
+  true (round-2 audit M6). Ownership is 2-step transferable and is an explicit constructor
+  argument (hooks are deployed via the CREATE2 factory, so `msg.sender` would be the factory).
+- **Waiting does not pay better than working.** A grace lapse and an evicted window both
+  forfeit the full bond, so tipping the keeper on those branches made *waiting* pay 20× more
+  than settling a benign bond promptly. The tip is now suppressed on any ungraded forfeit:
+  prompt settlement weakly dominates for every swap, and the lapsed bond still goes to LPs in
+  full (round-2 audit M7).
 - **Batch settlement is fault-isolated**: each id settles behind an external self-call with a
   gas stipend, so one hostile beneficiary cannot stall the Chainlink/Reactive lanes.
 
 ### Audit
 A multi-agent adversarial audit (4 attack lanes + independent verification of every finding)
-was run against this codebase **twice**. Round 1's fixes are the v3 deployment; two of its
-four headline claims did not reproduce under our own repro tests and were dropped rather
-than "fixed". Round 2 found a genuine **critical**: an attacker could evict a pending
-swap's observation window from the 128-slot ring buffer with cheap micro-swaps, and the
-resulting "no data" branch refunded the bond in full — buying your way out of a forfeit.
-v4 closes it with a permissionless `finalize(swapId)` that snapshots the verdict the
-instant the window closes, plus a `_noDataVerdict` that distinguishes *destroyed* data
-(forfeit, ungraded) from *absent* data (refund). Every surviving issue, its exploit, and
-its regression test lives in `test/integration/AuditRepro.t.sol` and
-`test/integration/EvictionExploit.t.sol` — the latter reproduces the exploit against the
-old logic and confirms it is closed against the new.
+was run against this codebase **twice**, and every surviving finding has an executable repro
+committed *before* its fix, in `test/integration/AuditRepro.t.sol`,
+`test/integration/AuditRepro2.t.sol` and `test/integration/EvictionExploit.t.sol`.
+
+Round 1's fixes are the v3 deployment; two of its four headline claims did not reproduce
+under our own repro tests and were **dropped rather than "fixed"**. Round 2 found eight more,
+including a critical (buffer eviction let a toxic trade buy a full refund), a silent 25 bps
+skim by anyone building the calldata, and an owner retune that could confiscate every
+in-flight bond — plus a headline number of ours that did not survive its own null test. All
+are closed in v6 and tabulated with their fixes in `DEPLOYMENTS.md`.
+
+A ninth came from neither audit: **we found it by running the thing.** The Reactive lane
+stalled for thirty minutes on the v5 deployment, and five swaps whose windows had already
+been *finalized benign* were auto-forfeited in full, because the verdict logic checked the
+grace deadline before consulting the finalized snapshot. Honest traders lost their entire
+bond for a keeper being late. Fixed in v6, with the anti-escape property now carried by the
+precise mechanism — a window whose data was *destroyed* still forfeits — rather than by a
+blunt clock.
+
+Two of the round-2 findings are worth reading in full even though they are closed, because
+the honest version is more useful than the tidy one: §4 above publishes the case where our
+own live demo inverts the pitch, and Future Work below names the structural change that
+would remove the cause rather than bound it.
 
 ## Future work
 
 - Production router with `IMsgSender` attribution and bond-aware `minAmountOut` (the demo router is v4-core's `PoolSwapTest` + `hookData` beneficiary passthrough, which the hook's `IMsgSender` fallback also supports)
+- **Decouple θ's volatility window from the markout window**, so the drift being scored can
+  no longer raise its own threshold. Today both are measured over `[exec+N, exec+N+W]`, which
+  on a thin tape lets a burst's own companion prints acquit its early trades (see §4). The
+  clamp bounds the damage; separating the windows would remove the coupling entirely. The
+  obvious alternative — a lagged *pre-trade* volatility window — is rejected: it has no data
+  for the first swaps into a pool or after any quiet period, collapsing θ to its floor and
+  confiscating benign flow, which is the failure mode the vol-scaling exists to prevent.
 - Time-weighted **median** settlement TWAP (current: jump-clamped time-weighted average)
 - Cross-pool portable reputation via an attested registry; fast-lane flat-fee opt-out
 

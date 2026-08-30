@@ -109,23 +109,41 @@ contract SettlementTest is HindsightFixture {
         assertLt(bal1(TRADER) - before, uint256(bond), "evicted evidence must not be rewarded");
     }
 
-    function test_auto_forfeit_after_grace() public {
+    /// Waiting out the RING BUFFER is the escape hatch that must stay shut: if the window's
+    /// observations are gone by the time anyone settles, the bond forfeits in full.
+    ///
+    /// Note this is deliberately NOT "settled late ⇒ forfeit". An earlier version keyed the
+    /// auto-forfeit purely off the grace deadline, which confiscated bonds that had already
+    /// been measured benign whenever the keeper lane stalled — observed live on v5, where
+    /// five swaps carrying markout 22-27 against theta 31 lost their entire bond because
+    /// settlement arrived thirty minutes late. Lateness with intact data is now measured;
+    /// only unmeasurable windows forfeit.
+    function test_auto_forfeit_when_the_window_data_is_gone() public {
         swapAs(TRADER, true, -1e18);
         uint128 bond = hook.getSwap(0).bond;
-        // Price never moved (benign!), but the trader waits out the grace period —
-        // waiting out the ring buffer must not be an escape hatch, so: full forfeit.
+        advanceTo(pastWindow(0));
+
+        // Flood the 128-slot buffer so nothing covering the window survives, then let the
+        // grace period lapse on top of it.
+        for (uint256 i; i < 140; i++) {
+            fb.increment();
+            hook.poke(key);
+        }
         advanceTo(hook.getSwap(0).execStamp + 25 + 3000 + 1);
+        (, bool dataOk,,,) = hook.previewSettle(0);
+        assertFalse(dataOk, "precondition: the window's observations are gone");
 
         uint256 traderBefore = bal1(TRADER);
         uint256 meBefore = bal1(address(this));
         vm.recordLogs();
         hook.settle(0);
 
-        assertEq(bal1(TRADER), traderBefore, "no refund after grace");
+        assertEq(bal1(TRADER), traderBefore, "no refund once the measurement is destroyed");
         uint256 tip = bal1(address(this)) - meBefore; // we were the settle caller
         uint256 flushed = _sumFlushed();
         (uint128 pot0, uint128 pot1,) = hook.pendingDonations(poolId);
         assertEq(tip + flushed + pot0 + pot1, uint256(bond), "entire bond goes to tip + LP pot/flush");
+        assertEq(tip, 0, "an ungraded forfeit pays the keeper nothing (M7)");
     }
 
     function test_reverted_swap_leaves_no_record() public {

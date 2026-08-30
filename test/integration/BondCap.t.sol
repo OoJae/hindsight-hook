@@ -35,6 +35,8 @@ contract BondCapTest is HindsightFixture {
         );
 
         uint256 id = hook.nextSwapId();
+        fundTrader(TRADER);
+        vm.prank(TRADER, TRADER);
         swapRouter.swap(
             thinKey,
             SwapParams({
@@ -67,6 +69,8 @@ contract BondCapTest is HindsightFixture {
             ZERO_BYTES
         );
         uint256 id = hook.nextSwapId();
+        fundTrader(TRADER);
+        vm.prank(TRADER, TRADER);
         swapRouter.swap(
             thinKey,
             SwapParams({
@@ -102,6 +106,8 @@ contract BondCapTest is HindsightFixture {
             ZERO_BYTES
         );
         uint256 id = hook.nextSwapId();
+        fundTrader(TRADER);
+        vm.prank(TRADER, TRADER);
         swapRouter.swap(
             thinKey,
             SwapParams({

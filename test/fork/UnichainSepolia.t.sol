@@ -124,6 +124,16 @@ contract UnichainSepoliaFork is Test {
     }
 
     function _swap(address beneficiary, bool zeroForOne, int256 amount) internal {
+        // tx.origin must be the beneficiary: the hook only honours a hookData beneficiary
+        // that signed the transaction, so a solver cannot redirect someone else's refund
+        // (round-2 audit M5). Give that identity real balances and approvals.
+        t0.mint(beneficiary, 10_000e18);
+        t1.mint(beneficiary, 10_000e18);
+        vm.startPrank(beneficiary);
+        t0.approve(address(swapRouter), type(uint256).max);
+        t1.approve(address(swapRouter), type(uint256).max);
+        vm.stopPrank();
+        vm.prank(beneficiary, beneficiary);
         swapRouter.swap(
             key,
             SwapParams({

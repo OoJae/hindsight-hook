@@ -57,22 +57,38 @@ contract AdminParamsTest is HindsightFixture {
         swapAs(TRADER, true, -1e18);
         uint128 bond = hook.getSwap(id).bond;
 
+        // The attack: params are read at SETTLE time, so collapsing maturity+window+grace
+        // would push this already-escrowed bond past its grace deadline and auto-forfeit it
+        // at 100%, bypassing theta and the ramp. The bounds must refuse it outright.
         HindsightHook.HindsightParams memory p = _p();
         p.keeperTipBps = 1000;      // max legal skim
         p.maturityStamps = 0;
         p.twapWindowStamps = 1;
         p.graceStamps = 1;
+        vm.expectRevert(HindsightHook.BadParams.selector);
         hook.setParams(poolId, p);
 
-        advanceTo(stampNow() + 2);
-        uint256 ownerBefore = bal1(address(this));
+        // ...and the bond is still refunded in full on its original schedule. The previous
+        // version of this test performed the retune and then asserted
+        // `assertGe(traderDelta + ownerGain, 0)` on UNSIGNED values — vacuously true, so it
+        // passed while the confiscation succeeded. (Round-2 audit M6.)
+        advanceTo(pastWindow(id));
         uint256 traderBefore = bal1(TRADER);
         hook.settle(id);
+        assertEq(bal1(TRADER) - traderBefore, uint256(bond), "benign pending bond refunds in full");
+    }
 
-        // Whatever the verdict, at most 10% can route to the settler and the rest is LP-bound.
-        uint256 ownerGain = bal1(address(this)) - ownerBefore;
-        assertLe(ownerGain, uint256(bond) / 10 + 1, "owner cannot take more than the tip cap");
-        assertGe(bal1(TRADER) - traderBefore + ownerGain, 0);
+    /// The deadline may still be moved LATER — the ratchet is one-directional, so an owner
+    /// can lengthen a settlement horizon (we did exactly that, 3+2s to 10+5s) but can never
+    /// shorten one out from under an escrowed bond.
+    function test_retune_may_lengthen_the_deadline() public {
+        HindsightHook.HindsightParams memory p = _p();
+        p.maturityStamps = 50;
+        p.twapWindowStamps = 25;
+        hook.setParams(poolId, p);
+        (, uint16 maturity, uint16 window,,,,,,,,) = hook.poolParams(poolId);
+        assertEq(maturity, 50);
+        assertEq(window, 25);
     }
 
     function test_two_step_ownership() public {

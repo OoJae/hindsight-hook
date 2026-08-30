@@ -92,6 +92,15 @@ contract BaseSepoliaFork is Test {
     }
 
     function _swap(bool zeroForOne, int256 amount) internal {
+        // The hook only honours a hookData beneficiary that signed the transaction, so
+        // TRADER must be tx.origin and must hold real balances (round-2 audit M5).
+        t0.mint(TRADER, 10_000e18);
+        t1.mint(TRADER, 10_000e18);
+        vm.startPrank(TRADER);
+        t0.approve(address(swapRouter), type(uint256).max);
+        t1.approve(address(swapRouter), type(uint256).max);
+        vm.stopPrank();
+        vm.prank(TRADER, TRADER);
         swapRouter.swap(
             key,
             SwapParams({

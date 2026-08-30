@@ -131,16 +131,19 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     /// @notice Routers that faithfully report their caller via IMsgSender. Only these may
     ///         attribute a swap to a third party (see `_resolveTrader`).
     mapping(address => bool) public trustedRouters;
-    uint256 public constant EMA_LAMBDA_WAD = 0.9e18;
+    /// @dev Jump clamp for theta's volatility input. Deliberately tighter than the TWAP's
+    ///      `maxJumpTicks`; see `_theta` for why the two defend opposite parties.
+    int24 internal constant MAX_VOL_JUMP_TICKS = 10;
+    uint256 internal constant EMA_LAMBDA_WAD = 0.9e18;
     uint256 public constant MULT_M0_WAD = 1e18;      // unknown addresses pay full bond (Sybil-proof)
-    uint256 public constant MULT_SLOPE_WAD = 0.02e18; // +0.02x per WAD-tick of score
-    uint256 public constant MULT_MIN_WAD = 0.1e18;
-    uint256 public constant MULT_MAX_WAD = 3e18;
+    uint256 internal constant MULT_SLOPE_WAD = 0.02e18; // +0.02x per WAD-tick of score
+    uint256 internal constant MULT_MIN_WAD = 0.1e18;
+    uint256 internal constant MULT_MAX_WAD = 3e18;
 
     // Benign-history discount: addresses earn m < 1 only through settled benign flow.
     mapping(address => uint32) public benignSettles;
-    uint256 public constant DISCOUNT_PER_SETTLE_WAD = 0.03e18; // −3% bond per benign settle
-    uint256 public constant DISCOUNT_FLOOR_WAD = 0.1e18;
+    uint256 internal constant DISCOUNT_PER_SETTLE_WAD = 0.03e18; // −3% bond per benign settle
+    uint256 internal constant DISCOUNT_FLOOR_WAD = 0.1e18;
 
     struct PendingDonation {
         uint128 amount0;
@@ -329,6 +332,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         address keeper;
         int256 markoutTicks;
         int256 thetaTicks;
+        bool graded; // false ⇒ ungraded forfeit (lapse or eviction): no keeper tip, see M7
     }
 
     /// @notice Permissionless ex-post settlement of a recorded swap.
@@ -424,7 +428,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
             if (r.attributed) {
                 _updateReputation(r.trader, markoutTicks, thetaTicks, toxic, graded, p.rampTicks);
             }
-            sd = SettleData(swapId, toxic, fWad, keeper, markoutTicks, thetaTicks);
+            sd = SettleData(swapId, toxic, fWad, keeper, markoutTicks, thetaTicks, graded);
         }
         poolManager.unlock(abi.encode(CallbackOp.SETTLE, abi.encode(sd)));
     }
@@ -446,15 +450,23 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         uint48 windowStart,
         uint48 windowEnd
     ) internal view returns (bool toxic, uint256 fWad, int256 markoutTicks, int256 thetaTicks, bool graded) {
-        if (nowStamp > windowEnd + p.graceStamps) {
-            return (true, 1e18, 0, 0, false); // auto-forfeit: punitive, but not a measurement
-        }
+        // A FINALIZED verdict outranks the grace deadline. `finalize` is permissionless and
+        // callable the instant the window closes, so once the measurement is in the record
+        // nothing is left to destroy by waiting — and the grace auto-forfeit exists only to
+        // stop toxic flow escaping by outliving the ring buffer. Checking grace first would
+        // punish a trader whose swap was measured BENIGN simply because the keeper lane was
+        // down for ten minutes: observed live on v5, where five swaps carrying markout 22-27
+        // against theta 31 were forfeited in full despite a recorded benign verdict.
         if (r.finalized) {
-            // Verdict was locked while the window's observations still existed.
             markoutTicks = r.fMarkout;
             thetaTicks = r.fTheta;
             fWad = MarkoutLib.forfeitWad(markoutTicks, thetaTicks, int256(p.rampTicks));
             return (fWad > 0, fWad, markoutTicks, thetaTicks, true);
+        }
+        if (nowStamp > windowEnd + p.graceStamps) {
+            // Never measured, and now unmeasurable: punitive, but not a measurement.
+            // The keeper tip is suppressed on this branch in `_settleCallback` (see M7).
+            return (true, 1e18, 0, 0, false);
         }
         (int24 twapTick,, bool ok) = observations[r.poolId].twap(windowStart, windowEnd, p.maxJumpTicks);
         if (!ok) {
@@ -487,15 +499,24 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         return (false, 0, 0, 0, false); // genuinely no data: refund, reputation-neutral
     }
 
-    /// @dev Volatility-scaled toxicity threshold. The same jump clamp the TWAP uses is
-    ///      applied to the volatility input, so one spike cannot inflate theta and let the
-    ///      trade that caused it read as benign.
+    /// @dev Volatility-scaled toxicity threshold.
+    ///
+    ///      The volatility input is clamped HARDER than the TWAP (`MAX_VOL_JUMP_TICKS`, not
+    ///      `p.maxJumpTicks`), because the two clamps defend opposite parties. The TWAP's
+    ///      60-tick clamp protects the TRADER from a manipulated settlement price, so it is
+    ///      deliberately loose. Theta's clamp protects the LPs: without it a trader can pad
+    ///      their own settlement window with round trips and drive theta to
+    ///      `thetaMin + k*maxJumpTicks` = 171 ticks, above the entire realistic markout
+    ///      distribution (max 110, p99 = 15 on 55,822 real mainnet swaps) — which acquits
+    ///      every trade. At 10 the ceiling is 31 ticks: still above p99, so genuinely
+    ///      volatile windows widen theta as intended, but below the tail this exists to catch.
+    ///      Found by round-2 audit M4; regression test in test/integration/AuditRepro2.t.sol.
     function _theta(PoolId id, HindsightParams memory p, uint48 windowStart, uint48 windowEnd)
         internal
         view
         returns (int256)
     {
-        (uint256 vol,) = observations[id].avgAbsJump(windowStart, windowEnd, p.maxJumpTicks);
+        (uint256 vol,) = observations[id].avgAbsJump(windowStart, windowEnd, MAX_VOL_JUMP_TICKS);
         return int256(uint256(int256(p.thetaMinTicks))) + int256(vol * p.thetaVolMultX10 / 10);
     }
 
@@ -518,7 +539,12 @@ contract HindsightHook is BaseHook, IUnlockCallback {
 
         uint128 forfeit = uint128(uint256(r.bond) * s.forfeitWad / 1e18);
         uint128 refund = r.bond - forfeit;
-        uint128 tip = uint128(uint256(forfeit) * p.keeperTipBps / 10_000);
+        // No tip on an UNGRADED forfeit (a lapse past grace, or an evicted window). Those
+        // pay the maximum forfeit, so tipping them would make waiting out the grace period
+        // strictly more profitable for a keeper than settling promptly — measured at 20x on
+        // a benign bond. With the tip suppressed, prompt settlement weakly dominates for
+        // every swap, and the lapsed bond still goes to the LPs in full. (Round-2 audit M7.)
+        uint128 tip = s.graded ? uint128(uint256(forfeit) * p.keeperTipBps / 10_000) : 0;
         uint128 donation = forfeit - tip;
 
         r.status = s.toxic ? 2 : 1;
@@ -709,9 +735,14 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         }
         if (hookData.length >= 32) {
             address t = abi.decode(hookData, (address));
-            if (t != address(0)) return (t, t == tx.origin);
+            if (t == tx.origin) return (t, true);
         }
-        return (sender, sender == tx.origin);
+        // Unauthenticated. The bond is withheld from the swap's own output, so it is
+        // tx.origin's money — and the refund must follow the money. Returning the hookData
+        // address here would let any solver or frontend that builds the calldata skim the
+        // bond of a user who signed the transaction; returning `sender` would strand the
+        // refund inside a router whose call ended long before the settlement window closed.
+        return (tx.origin, false);
     }
 
     function setTrustedRouter(address router, bool trusted) external {
@@ -745,10 +776,20 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     ///      (grace >= window, window >= 1).
     function setParams(PoolId id, HindsightParams calldata p) external {
         if (msg.sender != owner) revert NotOwner();
+        HindsightParams memory old = poolParams[id];
         if (
             p.bondBps > 100 || p.keeperTipBps > 1000 || p.twapWindowStamps == 0
                 || p.maturityStamps > 600 || p.thetaMinTicks < 1 || p.rampTicks < 1
                 || p.maxJumpTicks < 1 || p.epochStamps == 0 || p.graceStamps < p.twapWindowStamps
+                // theta_min is the floor of the toxicity threshold; unbounded above, the owner
+                // could set it past every possible markout and switch the mechanism off.
+                || p.thetaMinTicks > 1000
+                // Params are read at SETTLE time, so shortening the settlement deadline would
+                // retroactively push already-escrowed bonds past grace and auto-forfeit them
+                // at 100%, bypassing theta and the ramp entirely. The deadline may only ever
+                // move later. (Round-2 audit M6.)
+                || uint256(p.maturityStamps) + p.twapWindowStamps + p.graceStamps
+                    < uint256(old.maturityStamps) + old.twapWindowStamps + old.graceStamps
         ) revert BadParams();
         poolParams[id] = p;
     }
