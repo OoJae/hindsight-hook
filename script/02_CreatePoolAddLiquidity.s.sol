@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import {Script, console2} from "forge-std/Script.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
+import {HindsightHook} from "../src/HindsightHook.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
@@ -51,6 +52,28 @@ contract CreatePoolAddLiquidity is Script {
             key,
             ModifyLiquidityParams({tickLower: -6000, tickUpper: 6000, liquidityDelta: 50_000e18, salt: 0}),
             ""
+        );
+
+        // Set the LIVE parameters here, so the deployment is reproducible from the repo.
+        // Until v7 this was done out-of-band with an ad-hoc `cast send`, which meant the
+        // parameters the live pools actually run could not be derived from any committed
+        // file — and HindsightFixture's comment claiming "deployments do this in script/02"
+        // described a step that did not exist.
+        HindsightHook(payable(hook)).setParams(
+            key.toId(),
+            HindsightHook.HindsightParams({
+                bondBps: 25,
+                maturityStamps: 50,      // 10s at 200ms flashblocks
+                twapWindowStamps: 25,    // 5s settlement window
+                graceStamps: 3000,
+                thetaMinTicks: 3,
+                thetaVolMultX10: 14,     // k = 1.4 x trailing realized vol
+                rampTicks: 20,
+                maxJumpTicks: 60,
+                keeperTipBps: 500,
+                epochStamps: 50,
+                sizeTierCap: 10e18
+            })
         );
 
         vm.stopBroadcast();

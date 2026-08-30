@@ -78,16 +78,22 @@ contract AuditRepro2Test is HindsightFixture {
 
     // ── M4: theta is pumpable by padding your own settlement window ──────────────────
 
-    /// The audit showed the existing M3 regression test probes INSIDE the maturity period,
-    /// so it never touches theta. Probing inside the window is the real vector.
-    function test_M4_theta_cannot_be_pumped_above_the_realistic_markout_range() public {
+    /// M4/M9, closed at the root rather than bounded.
+    ///
+    /// v6 clamped how far a trader could pump theta (171 ticks -> 31). v7 removes the
+    /// channel: theta is measured over `[exec-600, exec-1]`, a window that has already
+    /// closed when the swap lands, so padding the settlement window moves it by exactly
+    /// zero. This asserts the *equality*, not a bound — a bound would still be a mechanism
+    /// with a price on it.
+    function test_M4_in_window_padding_cannot_move_theta_at_all() public {
         swapAs(USER, true, -1e18);
         HindsightHook.SwapRecord memory r = hook.getSwap(0);
+        int24 thetaAtExecution = r.fTheta;
+        (,,, int256 thetaBefore,) = hook.previewSettle(0);
 
-        // Land the probes INSIDE the settlement window [exec+15, exec+25], which is what the
-        // vacuous version of this test failed to do.
+        // The exact vector that reached theta=171 on the pre-fix build: round trips landing
+        // INSIDE the settlement window [exec+15, exec+25].
         advanceTo(r.execStamp + 15);
-        // 5 round trips land at exec+16 .. exec+25, i.e. entirely inside the window.
         for (uint256 i = 0; i < 5; i++) {
             fb.increment();
             swapAs(address(0xADD1), true, -30e18);
@@ -95,11 +101,39 @@ contract AuditRepro2Test is HindsightFixture {
             swapAs(address(0xADD1), false, -30e18);
         }
         advanceTo(r.execStamp + 26);
-        (,, int256 markout, int256 theta,) = hook.previewSettle(0);
-        assertGt(markout, 0, "the padded swap should still show positive drift");
-        // p99 markout on the real 55,822-swap tape is 15 ticks; a ceiling above ~40 exempts
-        // the entire realistic distribution and makes the mechanism inert.
-        assertLt(theta, 40, "theta ceiling must stay below the tail the mechanism exists to catch");
+
+        (,, int256 markout, int256 thetaAfter,) = hook.previewSettle(0);
+        assertGt(markout, 0, "precondition: the padding did move the price");
+        assertEq(thetaAfter, thetaBefore, "padding the settlement window must not move theta");
+        assertEq(thetaAfter, int256(thetaAtExecution), "theta is whatever it was at execution");
+    }
+
+    /// Guard against the test above being vacuous: theta must actually RESPOND to
+    /// volatility, just to volatility that happened before the trade. If the trailing window
+    /// were dead code theta would sit at its floor everywhere, and an equality assertion
+    /// would prove nothing.
+    ///
+    /// (A third test asserting "two swaps with identical pre-history get identical theta"
+    /// was written and then deleted: their settlement windows overlap, so it passed on the
+    /// OLD sourcing too. Both tests kept here fail on the old code — verified by reverting
+    /// _theta and re-running.)
+    function test_M4_theta_responds_to_PRE_trade_volatility() public {
+        // A quiet-history swap: theta should sit at the floor.
+        swapAs(USER, true, -1e18);
+        int24 quietTheta = hook.getSwap(0).fTheta;
+
+        // Now make the tape violent BEFORE the next swap...
+        for (uint256 i = 0; i < 10; i++) {
+            fb.increment();
+            swapAs(address(0xADD1), i % 2 == 0, -40e18);
+        }
+        fb.increment();
+        swapAs(USER, true, -1e18);
+        int24 loudTheta = hook.getSwap(hook.nextSwapId() - 1).fTheta;
+
+        assertEq(quietTheta, 3, "quiet pre-trade history leaves theta at its floor");
+        assertGt(loudTheta, quietTheta,
+            "a violent PRE-trade tape must widen theta, else the vol term is dead code");
     }
 
     // ── M6: setParams must not be able to confiscate an in-flight bond ───────────────
@@ -121,7 +155,7 @@ contract AuditRepro2Test is HindsightFixture {
                 twapWindowStamps: 1,
                 graceStamps: 1,
                 thetaMinTicks: 3,
-                thetaVolMultX10: 28,
+                thetaVolMultX10: 14,
                 rampTicks: 20,
                 maxJumpTicks: 60,
                 keeperTipBps: 1000,
@@ -146,7 +180,7 @@ contract AuditRepro2Test is HindsightFixture {
                 twapWindowStamps: 10,
                 graceStamps: 3000,
                 thetaMinTicks: type(int24).max,
-                thetaVolMultX10: 28,
+                thetaVolMultX10: 14,
                 rampTicks: 20,
                 maxJumpTicks: 60,
                 keeperTipBps: 500,

@@ -11,7 +11,7 @@ contract AdminParamsTest is HindsightFixture {
     function _p() internal pure returns (HindsightHook.HindsightParams memory) {
         return HindsightHook.HindsightParams({
             bondBps: 25, maturityStamps: 15, twapWindowStamps: 10, graceStamps: 3000,
-            thetaMinTicks: 3, thetaVolMultX10: 28, rampTicks: 20, maxJumpTicks: 60,
+            thetaMinTicks: 3, thetaVolMultX10: 14, rampTicks: 20, maxJumpTicks: 60,
             keeperTipBps: 500, epochStamps: 50, sizeTierCap: 10e18
         });
     }

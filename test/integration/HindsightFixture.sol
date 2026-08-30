@@ -55,8 +55,8 @@ contract HindsightFixture is Test, Deployers {
             ZERO_BYTES
         );
 
-        // Reputation discounts require an explicitly configured whale guard (sizeTierCap).
-        // Deployments do this in script/02; mirror it here so tests exercise the real config.
+        // Mirror the live configuration that script/02 applies at deploy time, so the
+        // suite exercises the real parameters rather than _defaultParams().
         hook.setParams(
             poolId,
             HindsightHook.HindsightParams({
@@ -65,7 +65,7 @@ contract HindsightFixture is Test, Deployers {
                 twapWindowStamps: 10,
                 graceStamps: 3000,
                 thetaMinTicks: 3,
-                thetaVolMultX10: 28,
+                thetaVolMultX10: 14,
                 rampTicks: 20,
                 maxJumpTicks: 60,
                 keeperTipBps: 500,

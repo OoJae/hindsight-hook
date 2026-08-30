@@ -134,6 +134,12 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     /// @dev Jump clamp for theta's volatility input. Deliberately tighter than the TWAP's
     ///      `maxJumpTicks`; see `_theta` for why the two defend opposite parties.
     int24 internal constant MAX_VOL_JUMP_TICKS = 10;
+    /// @dev How far back theta's volatility window reaches, in stamps. 600 stamps = 120s at
+    ///      Unichain's 200ms flashblocks, and 120s on the block.number fallback too (60 Base
+    ///      blocks x 10 stamps). Deliberately a constant rather than a HindsightParams field:
+    ///      a new field would change the setParams selector, grow two public getters and
+    ///      break the positional poolParams destructures, for a value we do not tune live.
+    uint48 internal constant THETA_VOL_LOOKBACK_STAMPS = 600;
     uint256 internal constant EMA_LAMBDA_WAD = 0.9e18;
     uint256 public constant MULT_M0_WAD = 1e18;      // unknown addresses pay full bond (Sybil-proof)
     uint256 internal constant MULT_SLOPE_WAD = 0.02e18; // +0.02x per WAD-tick of score
@@ -300,6 +306,10 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         // this is an in-place refresh.
         observations[id].writeOrUpdate(stamp, execTick);
 
+        // Theta is fixed here, once, from data that already existed when the swap landed.
+        // Nothing that happens afterwards can move it.
+        int24 theta = int24(_theta(id, p, stamp));
+
         uint256 swapId = nextSwapId++;
         swaps[swapId] = SwapRecord({
             trader: trader,
@@ -314,7 +324,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
             attributed: attributed,
             finalized: false,
             fMarkout: 0,
-            fTheta: 0
+            fTheta: theta
         });
         emit SwapRecorded(swapId, id, trader, zeroForOne, uint128(absUnspec), uint128(bond), stamp, execTick);
     }
@@ -477,7 +487,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
             return _noDataVerdict(r.poolId, windowEnd);
         }
         markoutTicks = MarkoutLib.markout(r.execTick, twapTick, r.zeroForOne);
-        thetaTicks = _theta(r.poolId, p, windowStart, windowEnd);
+        thetaTicks = r.fTheta;   // fixed at execution; see _theta
         fWad = MarkoutLib.forfeitWad(markoutTicks, thetaTicks, int256(p.rampTicks));
         toxic = fWad > 0;
         graded = true;
@@ -499,24 +509,37 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         return (false, 0, 0, 0, false); // genuinely no data: refund, reputation-neutral
     }
 
-    /// @dev Volatility-scaled toxicity threshold.
+    /// @dev Volatility-scaled toxicity threshold, measured over a window that closes BEFORE
+    ///      the swap it prices: `[execStamp - 600, execStamp - 1]`.
     ///
-    ///      The volatility input is clamped HARDER than the TWAP (`MAX_VOL_JUMP_TICKS`, not
-    ///      `p.maxJumpTicks`), because the two clamps defend opposite parties. The TWAP's
-    ///      60-tick clamp protects the TRADER from a manipulated settlement price, so it is
-    ///      deliberately loose. Theta's clamp protects the LPs: without it a trader can pad
-    ///      their own settlement window with round trips and drive theta to
-    ///      `thetaMin + k*maxJumpTicks` = 171 ticks, above the entire realistic markout
-    ///      distribution (max 110, p99 = 15 on 55,822 real mainnet swaps) — which acquits
-    ///      every trade. At 10 the ceiling is 31 ticks: still above p99, so genuinely
-    ///      volatile windows widen theta as intended, but below the tail this exists to catch.
-    ///      Found by round-2 audit M4; regression test in test/integration/AuditRepro2.t.sol.
-    function _theta(PoolId id, HindsightParams memory p, uint48 windowStart, uint48 windowEnd)
+    ///      Through v6 this read the SETTLEMENT window — the same observations the markout is
+    ///      measured over — so a trade's own companion prints raised the very bar it was
+    ///      judged against (round-2 audit M9). That was not theoretical: on 55,822 real
+    ///      mainnet swaps, with nobody attacking, 4,195 swaps inflated their own theta by an
+    ///      average of 2.7 ticks and **927 were acquitted because of it**. Sourcing sigma
+    ///      from a window that has already closed makes that number exactly zero — not by
+    ///      clamping harder, but because there is nothing left for the trade to write into.
+    ///
+    ///      The upper bound is `execStamp - 1`, not `execStamp`: `_beforeSwap` writes this
+    ///      stamp with the pre-swap tick and `_recordSwap` overwrites it with the POST-swap
+    ///      tick, so a window ending at `execStamp` would still ingest the trade's own impact.
+    ///
+    ///      No data in the window leaves sigma at 0, i.e. theta at its floor. That is
+    ///      fail-shut, and deliberately so: failing open would let a trader wait out a quiet
+    ///      period and be acquitted unconditionally. Measured incidence on the real tape is
+    ///      2.9% of swaps.
+    ///
+    ///      The clamp is `MAX_VOL_JUMP_TICKS` (10), tighter than the TWAP's `maxJumpTicks`
+    ///      (60), because the two defend opposite parties: the TWAP's loose clamp protects
+    ///      the TRADER from a manipulated settlement price; theta's tight clamp protects LPs.
+    function _theta(PoolId id, HindsightParams memory p, uint48 execStamp)
         internal
         view
         returns (int256)
     {
-        (uint256 vol,) = observations[id].avgAbsJump(windowStart, windowEnd, MAX_VOL_JUMP_TICKS);
+        uint48 from = execStamp > THETA_VOL_LOOKBACK_STAMPS ? execStamp - THETA_VOL_LOOKBACK_STAMPS : 0;
+        uint48 to = execStamp > 0 ? execStamp - 1 : 0;
+        (uint256 vol,) = observations[id].avgAbsJump(from, to, MAX_VOL_JUMP_TICKS);
         return int256(uint256(int256(p.thetaMinTicks))) + int256(vol * p.thetaVolMultX10 / 10);
     }
 
@@ -627,7 +650,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         (int24 twapTick,, bool ok) = observations[r.poolId].twap(windowStart, windowEnd, p.maxJumpTicks);
         if (!ok) return; // genuinely no data yet — nothing to lock
         r.fMarkout = int24(MarkoutLib.markout(r.execTick, twapTick, r.zeroForOne));
-        r.fTheta = int24(_theta(r.poolId, p, windowStart, windowEnd));
+        // fTheta was fixed at execution; finalize only locks the markout.
         r.finalized = true;
     }
 
@@ -759,7 +782,8 @@ contract HindsightHook is BaseHook, IUnlockCallback {
             twapWindowStamps: 10,   // W ≈ 2.0s
             graceStamps: 3000,      // ≈ 10 min before auto-forfeit
             thetaMinTicks: 3,       // θ floor ≈ 3 bps
-            thetaVolMultX10: 28,    // k = 2.8 × realized per-observation vol
+            thetaVolMultX10: 14,    // k = 1.4 × trailing realized vol (recalibrated
+                                    // for the pre-trade sigma; was 2.8 for the in-window one)
             rampTicks: 20,          // full forfeit at θ + 20 ticks
             maxJumpTicks: 60,       // TWAP contribution clamp
             keeperTipBps: 500,      // 5% of the forfeit
@@ -846,7 +870,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         dataOk = ok;
         if (ok) {
             markoutTicks = MarkoutLib.markout(r.execTick, twapTick, r.zeroForOne);
-            thetaTicks = _theta(r.poolId, p, windowStart, windowEnd);
+            thetaTicks = r.fTheta;   // fixed at execution; see _theta
             forfeitWad_ = MarkoutLib.forfeitWad(markoutTicks, thetaTicks, int256(p.rampTicks));
         }
     }
