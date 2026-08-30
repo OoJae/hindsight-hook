@@ -131,18 +131,24 @@ full. ![who pays](backtest/chart_who_pays.png)
 
 ### 3. Two obvious objections, answered with data
 
-**"Circular — you define 'toxic', then grade competitors against your own labels."** So here
-is the same comparison with **no labels at all**: the correlation between what a mechanism
-*charges* and the *realized harm* a trade caused. The competitor is steelmanned with a
-**trailing** 120s volatility signal — what a hook can actually read in `beforeSwap` — because
-Hindsight's own θ uses the forward window only by virtue of pricing at `settle()`, after that
-window closes. That asymmetry *is* the mechanism.
+**"Circular — you define 'toxic', then grade competitors against your own labels."** The
+obvious rebuttal — correlate each mechanism's *charge* against realized markout — is a
+**tautology, and we'll say so first**: our charge is a monotone function of the settlement
+markout, so that test scores ~0.80 on pure Gaussian noise (higher than it scores on the real
+data). It proves nothing. So we score the charge against harm it **never observed**: set the
+charge on the settlement window `[t+10s, t+15s)`, then measure harm on a **disjoint later
+window** `[t+20s, t+60s)`, with a shuffled-harm control. The competitor is steelmanned with a
+**trailing** 120s volatility signal — what a hook can actually read in `beforeSwap`.
 
 | mechanism | Pearson | Spearman |
 |---|---|---|
-| **Hindsight** | **0.607** | **0.563** |
-| dynamic fee (trailing vol — fair ex-ante signal) | 0.066 | 0.032 |
-| flat fee | 0.000 | 0.074 |
+| **Hindsight** | **0.424** | **0.420** |
+| dynamic fee (trailing vol — fair ex-ante signal) | 0.036 | 0.007 |
+| flat fee | 0.000 | 0.000 |
+| *control: Hindsight vs shuffled harm* | *−0.001* | *0.002* |
+
+Hindsight's charge predicts *future* adverse selection an order of magnitude better than a
+volatility-scaled fee, and the control lands at zero exactly as it must.
 
 **"Just one bot on a thin tape?"** The top address is half the dataset, so we removed it —
 the result strengthens:

@@ -348,61 +348,83 @@ def chart_horizon(rows):
     print("  wrote chart_horizon.png")
 
 
-def corr_test(res):
-    """Label-free rebuttal to the circularity critique.
+def corr_test(rows, res):
+    """OUT-OF-SAMPLE rebuttal to the circularity critique.
 
-    Sections 2 and 4 classify swaps using Hindsight's own threshold, so a referee can fairly
-    ask whether the comparison is circular. This test uses NO labels at all: it simply asks
-    how strongly what a mechanism CHARGES tracks the harm a trade actually caused.
+    The naive version of this test is a TAUTOLOGY and we say so: Hindsight's charge is a
+    monotone function of the settlement-window markout, so correlating charge against that
+    same markout scores ~0.6 even on pure noise (we measured 0.80 on Gaussian noise — higher
+    than the real data). So we measure harm over a LATER, DISJOINT window the charge never
+    saw, and publish a permutation null as the control.
     """
-    section("6. CIRCULARITY REBUTTAL — label-free: does the fee track realized harm?")
+    section("6. CIRCULARITY REBUTTAL — out-of-sample: does the charge predict FUTURE harm?")
+    import random
 
     def corr(xs, ys):
-        mx, my = statistics.mean(xs), statistics.mean(ys)
-        num = sum((a - mx) * (b - my) for a, b in zip(xs, ys))
-        dx = sum((a - mx) ** 2 for a in xs) ** 0.5
-        dy = sum((b - my) ** 2 for b in ys) ** 0.5
-        return num / (dx * dy) if dx and dy else 0.0
+        n = len(xs); mx = sum(xs) / n; my = sum(ys) / n
+        sxy = sxx = syy = 0.0
+        for a, b in zip(xs, ys):
+            da, db = a - mx, b - my
+            sxy += da * db; sxx += da * da; syy += db * db
+        return sxy / ((sxx * syy) ** 0.5) if sxx and syy else 0.0
 
-    def rank(v):
+    def rank_avg(v):
+        """Ranks with ties AVERAGED. Index-broken ties silently encode row order, which made
+        a constant series score a spurious 0.197 against chronologically-ordered data."""
         order = sorted(range(len(v)), key=lambda i: v[i])
-        r = [0.0] * len(v)
-        for pos, i in enumerate(order):
-            r[i] = pos
+        r = [0.0] * len(v); i = 0
+        while i < len(order):
+            j = i
+            while j < len(order) and v[order[j]] == v[order[i]]:
+                j += 1
+            avg = (i + j - 1) / 2
+            for kk in range(i, j):
+                r[order[kk]] = avg
+            i = j
         return r
 
-    fees = sum(r["fee"] for r in res)
-    claw = sum(r["forfeit"] for r in res)
+    # harm measured on a LATER disjoint window: [t+20, t+60)  (charge used [t+10, t+15))
+    last = rows[-1]["block"]
+    fut, keep = [], []
+    for idx, (r, s_row) in enumerate(zip(res, rows)):
+        b = s_row["block"]
+        if b + 60 > last:
+            continue
+        tw, _ = window(rows, idx, b + 20, b + 60)
+        if tw is None:
+            continue
+        drift = tw - s_row["tick"]
+        fut.append(-drift if s_row["amount0"] < 0 else drift)
+        keep.append(r)
+
+    fees = sum(r["fee"] for r in res); claw = sum(r["forfeit"] for r in res)
     target = fees + claw
     lo, hi = 0.0, 200.0
     for _ in range(70):
-        c = (lo + hi) / 2
-        rev = sum(r["usd"] * (HEADLINE_FEE_BPS + c * r["vol"]) / 1e4 for r in res)
-        (lo := c) if rev < target else (hi := c)
-    c = (lo + hi) / 2
+        ct = (lo + hi) / 2
+        rev = sum(r["usd"] * (HEADLINE_FEE_BPS + ct * r["tvol"]) / 1e4 for r in res)
+        (lo := ct) if rev < target else (hi := ct)
+    ct = (lo + hi) / 2
     flat = target / sum(r["usd"] for r in res) * 1e4
 
-    mk = [r["markout"] for r in res]
-    # Steelman: give the competitor a TRAILING vol signal it could actually read in
-    # beforeSwap, not our forward-looking window.
-    lo2, hi2 = 0.0, 200.0
-    for _ in range(70):
-        ct = (lo2 + hi2) / 2
-        rev = sum(r["usd"] * (HEADLINE_FEE_BPS + ct * r["tvol"]) / 1e4 for r in res)
-        (lo2 := ct) if rev < target else (hi2 := ct)
-    ct = (lo2 + hi2) / 2
     series = {
-        "Hindsight": [(r["fee"] + r["forfeit"]) / r["usd"] * 1e4 for r in res],
-        "dynamic fee (trailing vol)": [HEADLINE_FEE_BPS + ct * r["tvol"] for r in res],
-        "dynamic fee (forward vol)": [HEADLINE_FEE_BPS + c * r["vol"] for r in res],
-        "flat fee (rev-matched)": [flat] * len(res),
+        "Hindsight": [(r["fee"] + r["forfeit"]) / r["usd"] * 1e4 for r in keep],
+        "dynamic fee (trailing vol)": [HEADLINE_FEE_BPS + ct * r["tvol"] for r in keep],
+        "flat fee (rev-matched)": [flat] * len(keep),
     }
-    print(f"{'mechanism':>28}{'pearson':>10}{'spearman':>11}")
+    print(f"  charge set on the settlement window [t+10s, t+15s);")
+    print(f"  harm measured on a DISJOINT later window [t+20s, t+60s).  n={len(keep):,}\n")
+    print(f"{'mechanism':>30}{'pearson':>10}{'spearman':>11}")
     for name, v in series.items():
-        print(f"{name:>28}{corr(v, mk):>10.3f}{corr(rank(v), rank(mk)):>11.3f}")
-    print("\n  No toxic/benign labels are used anywhere in this test. A fee that actually")
-    print("  targets informed flow should correlate with realized markout; one that cannot")
-    print("  distinguish sits near zero.")
+        print(f"{name:>30}{corr(v, fut):>10.3f}{corr(rank_avg(v), rank_avg(fut)):>11.3f}")
+
+    random.seed(3)
+    shuf = fut[:]; random.shuffle(shuf)
+    h = series["Hindsight"]
+    print(f"{'CONTROL: Hindsight vs shuffled harm':>30}{corr(h, shuf):>10.3f}{corr(rank_avg(h), rank_avg(shuf)):>11.3f}")
+    print("\n  The in-sample version of this test is a tautology — our charge is a monotone")
+    print("  function of the settlement markout and scores ~0.80 on pure Gaussian noise. So we")
+    print("  score it against harm it never observed, with a shuffled-harm control at ~0.")
 
 
 def concentration(rows, res):
@@ -479,7 +501,7 @@ if __name__ == "__main__":
     horizon_robustness(rows)
     vol_decile(rows, res)
     sensitivity(rows)
-    corr_test(res)
+    corr_test(rows, res)
     concentration(rows, res)
     permutation_null(rows)
     section("CHARTS")
