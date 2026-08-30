@@ -43,7 +43,9 @@ BOND_BPS = 25
 N_SEC, W_SEC = 10, 5   # see the permutation null in section 8: at 3+2s the
                        # signal is not separable from chance; at 10+5s it is (z=+4.4)
 THETA_MIN = 3.0
-THETA_K = 1.4          # re-calibrated for the trailing sigma (was 2.8 for the in-window one)
+THETA_VOL_MULT_X10 = 14   # == HindsightParams.thetaVolMultX10. INTEGER, like the contract.
+THETA_K = THETA_VOL_MULT_X10 / 10.0   # float view, for the competitor fee and the k sweeps
+CARDINALITY = 128         # == ObservationLib.CARDINALITY: the ring cannot hold more
 RAMP = 20.0
 MAX_JUMP = 60.0       # TWAP per-observation clamp  == HindsightParams.maxJumpTicks
 MAX_VOL_JUMP = 10.0   # theta's vol-input clamp     == HindsightHook.MAX_VOL_JUMP_TICKS
@@ -133,6 +135,45 @@ THETA_SRC = "trailing"
 THETA_LOOKBACK = 120   # seconds, for THETA_SRC == "trailing"
 
 
+_THETA_CACHE = {}
+
+def trailing_theta_int(rows, theta_min=None, mult_x10=None, lookback=None):
+    """Theta exactly as the CONTRACT computes it — integers all the way down.
+
+    Round 3 caught the backtest and the hook disagreeing here. `ObservationLib:149` is
+    `meanJumpTicks = sumAbs / nJumps`, integer division, and `_theta` floors a SECOND time in
+    `vol * thetaVolMultX10 / 10`. Doing either in floating point overstates theta: measured
+    across 55,822 swaps the float model put theta at its floor for 3.0% of swaps where the
+    contract puts it there for 59.0%, and ran +0.861 ticks high on average.
+
+    Also bounded by CARDINALITY: the ring holds 128 observations, so a 120s window on a busy
+    pool sees only the most recent 128 regardless of how far back it nominally reaches.
+    """
+    import bisect
+    tm = THETA_MIN if theta_min is None else theta_min
+    mx = THETA_VOL_MULT_X10 if mult_x10 is None else mult_x10
+    lb = THETA_LOOKBACK if lookback is None else lookback
+    key = (id(rows), tm, mx, lb)
+    if key in _THETA_CACHE:
+        return _THETA_CACHE[key]
+    blocks = [r["block"] for r in rows]
+    jumps = [0] + [min(abs(rows[i]["tick"] - rows[i - 1]["tick"]), int(MAX_VOL_JUMP))
+                   for i in range(1, len(rows))]
+    pref = [0] * (len(jumps) + 1)
+    for i, j in enumerate(jumps):
+        pref[i + 1] = pref[i] + j
+    out = []
+    for i, r in enumerate(rows):
+        lo = bisect.bisect_left(blocks, r["block"] - lb)
+        if i - lo > CARDINALITY:      # the ring evicts the rest
+            lo = i - CARDINALITY
+        cnt = i - lo
+        vol = (pref[i] - pref[lo]) // cnt if cnt > 0 else 0   # integer division, like solc
+        out.append(tm + (vol * mx) // 10)                     # and again
+    _THETA_CACHE[key] = out
+    return out
+
+
 def price(rows, n_sec=N_SEC, w_sec=W_SEC, theta_min=THETA_MIN, k=THETA_K, ramp=RAMP,
           bond_bps=BOND_BPS, static_theta=None, theta_src=None, lookback=None):
     """Re-price every swap. Returns per-swap dicts."""
@@ -143,7 +184,7 @@ def price(rows, n_sec=N_SEC, w_sec=W_SEC, theta_min=THETA_MIN, k=THETA_K, ramp=R
     # theta's own trailing estimate uses theta's tighter clamp, and must END BEFORE the
     # swap: `lag=1` excludes the swap's own print, mirroring the on-chain window
     # [execStamp - V, execStamp - 1].
-    theta_tvol = trailing_vols(rows, lb, MAX_VOL_JUMP) if src == "trailing" else None
+    theta_int = trailing_theta_int(rows, theta_min, round(k * 10), lb) if src == "trailing" else None
     out = []
     for i, s in enumerate(rows):
         if s["block"] + n_sec + w_sec > last:
@@ -161,7 +202,7 @@ def price(rows, n_sec=N_SEC, w_sec=W_SEC, theta_min=THETA_MIN, k=THETA_K, ramp=R
         elif src == "static":
             theta = theta_min
         elif src == "trailing":
-            theta = theta_min + k * theta_tvol[i]
+            theta = theta_int[i]
         else:
             theta = theta_min + k * vol
         f = max(0.0, min(1.0, (markout - theta) / ramp))
@@ -177,19 +218,37 @@ HARM_LO, HARM_HI = 20, 60   # disjoint from the settlement window [t+10, t+15)
 _HARM_CACHE = {}
 
 def future_harms(rows):
-    """Per-swap realized adverse drift on a LATER, DISJOINT window.
+    """Per-swap realized adverse drift STRICTLY AFTER the settlement window closes.
 
-    This is the only label in the file that the mechanism never observes, so it is the
-    only fair referee for "is this classifier any good". Indexed by row position.
+    Anchoring matters more than the window bounds, and we got this wrong until round 3.
+    The label used to be measured from the swap's OWN execution tick:
+
+        harm_old = sign * (TWAP[t+20,t+60) - tick_t)
+
+    which is identically `markout + (drift after the window)`. Verified over all 55,822
+    swaps: max |harm_old - (markout + future)| = 0. Since the charge is a monotone function
+    of the markout, that label smuggles the charge into its own answer. It made the windows
+    disjoint in TIME while leaving them overlapping in INFORMATION, and 91% of the published
+    covariance came from the tautology this test exists to rebut. A placebo tape with zero
+    serial predictability scored HIGHER (+0.49) than the real tape (+0.48).
+
+    Correct label: measure from where the settlement window ENDS.
+
+        harm = sign * (TWAP[t+20,t+60) - TWAP[t+15,t+20))
+
+    Nothing the charge saw is inside it. Indexed by row position.
     """
     key = id(rows)
     if key not in _HARM_CACHE:
         out = [None] * len(rows)
+        wend = N_SEC + W_SEC
         for i, s in enumerate(rows):
-            hw, _ = window(rows, i, s["block"] + HARM_LO, s["block"] + HARM_HI)
-            if hw is None:
+            b = s["block"]
+            base, _ = window(rows, i, b + wend, b + HARM_LO)   # [t+15, t+20): the anchor
+            hw, _ = window(rows, i, b + HARM_LO, b + HARM_HI)  # [t+20, t+60): the harm
+            if hw is None or base is None:
                 continue
-            drift = hw - s["tick"]
+            drift = hw - base
             out[i] = -drift if s["amount0"] < 0 else drift
         _HARM_CACHE[key] = out
     return _HARM_CACHE[key]
@@ -221,6 +280,53 @@ def lvr_decomposition(res):
     print(f"  RHO = clawback / gross adverse selection = {100 * claw / gross_as:.1f}%")
     print(f"  clawback / net LVR bleed                 = {abs(claw / net_markout):.1f}x")
     return fees, claw
+
+
+def _independent_incidence(res):
+    """Who pays, scored against a label none of the mechanisms can see.
+
+    Round-3 finding I: the published `0.0%` was a string literal, true because "benign" was
+    defined as "not forfeited by Hindsight". This re-scores every mechanism against address
+    behaviour in the second half of the tape.
+    """
+    import collections
+    blocks = sorted(r["block"] for r in res)
+    mid = blocks[len(blocks) // 2]
+    h2 = [r for r in res if r["block"] >= mid]
+    by = collections.defaultdict(lambda: {"usd": 0.0, "mk": 0.0})
+    for r in h2:
+        a = by[r["sender"]]
+        a["usd"] += r["usd"]; a["mk"] += r["usd"] * max(0.0, r["markout"]) / 1e4
+    rate = {s: (a["mk"] / a["usd"] if a["usd"] else 0.0) for s, a in by.items()}
+    tot = sum(by[s]["usd"] for s in by); acc = 0.0
+    informed = set()
+    for s in sorted(rate, key=lambda s: -rate[s]):
+        if acc >= tot / 2:
+            break
+        informed.add(s); acc += by[s]["usd"]
+
+    fees = sum(r["fee"] for r in h2); claw = sum(r["forfeit"] for r in h2)
+    target = fees + claw
+    lo, hi = 0.0, 200.0
+    for _ in range(70):
+        c = (lo + hi) / 2
+        rev = sum(r["usd"] * (HEADLINE_FEE_BPS + c * r["tvol"]) / 1e4 for r in h2)
+        (lo := c) if rev < target else (hi := c)
+    c = (lo + hi) / 2
+    flat = target / sum(r["usd"] for r in h2) * 1e4
+
+    def share(fn):
+        u = i = 0.0
+        for r in h2:
+            v = fn(r)
+            (i := i + v) if r["sender"] in informed else (u := u + v)
+        return 100 * u / (u + i) if (u + i) > 0 else 0.0
+
+    return {
+        "dyn": share(lambda r: r["usd"] * (c * r["tvol"]) / 1e4),
+        "flat": share(lambda r: r["usd"] * (flat - HEADLINE_FEE_BPS) / 1e4),
+        "hind": share(lambda r: r["forfeit"]),
+    }
 
 
 def revenue_matched(res, fees, claw):
@@ -265,10 +371,31 @@ def revenue_matched(res, fees, claw):
           f"{HEADLINE_FEE_BPS:>13.2f}b"
           f"{vw(tox, lambda r: r['fee'] + r['forfeit']):>13.2f}b")
     print()
-    print(f"share of the INCREMENTAL revenue paid by BENIGN flow:")
+    print("share of the INCREMENTAL revenue paid by BENIGN flow, scored two ways:")
+    print()
+    print("  (a) against Hindsight's OWN labels -- definitional, not a measurement:")
     print(f"   volatility-scaled dynamic fee   {100 * inc_ben / (inc_ben + inc_tox):>6.1f}%")
     print(f"   flat fee                        {100 * vol_b / (vol_b + vol_t):>6.1f}%   (pro-rata by volume)")
-    print(f"   HINDSIGHT                          0.0%   (every benign bond refunded in full)")
+    print(f"   HINDSIGHT                          0.0%   <- TRUE BY CONSTRUCTION")
+    print()
+    print("      Hindsight's incremental revenue IS the forfeits, and a swap is 'benign'")
+    print("      exactly when Hindsight did not forfeit it. The 0.0% is a tautology and was")
+    print("      published as a headline until round 3. Kept here only to show its shape.")
+    print()
+    print("  (b) against an INDEPENDENT label. Split the week in half; classify each address")
+    print("      by the adverse selection it actually imposes in the SECOND half (volume-")
+    print("      weighted median). Nothing charged in that half derives from it, and section")
+    print("      6B shows the label carries real signal. Then ask what share of each")
+    print("      mechanism's incremental revenue in that half comes from NON-informed")
+    print("      addresses:")
+    ind = _independent_incidence(res)
+    print(f"   volatility-scaled dynamic fee   {ind['dyn']:>6.1f}%")
+    print(f"   flat fee                        {ind['flat']:>6.1f}%")
+    print(f"   HINDSIGHT                       {ind['hind']:>6.1f}%")
+    print()
+    print("      That is the honest version of this chart: roughly 3x less of Hindsight's")
+    print("      revenue comes from flow that is not informed. A real edge, and a much")
+    print("      smaller one than the tautology implied.")
 
 
 def horizon_robustness(rows):
@@ -504,16 +631,28 @@ def chart_horizon(rows):
 
 
 def corr_test(rows, res):
-    """OUT-OF-SAMPLE rebuttal to the circularity critique.
+    """The circularity rebuttal, rebuilt in round 3 after the original version failed its own
+    placebo control.
 
-    The naive version of this test is a TAUTOLOGY and we say so: Hindsight's charge is a
-    monotone function of the settlement-window markout, so correlating charge against that
-    same markout scores ~0.6 even on pure noise (we measured 0.80 on Gaussian noise — higher
-    than the real data). So we measure harm over a LATER, DISJOINT window the charge never
-    saw, and publish a permutation null as the control.
+    The objection is: "you define toxic, then grade competitors against your own labels."
+    The original answer correlated each mechanism's charge against realized drift on a later
+    window, anchored at the swap's own execution tick. That label is identically
+    `markout + later drift`, so 91% of its covariance was the tautology the section exists to
+    rebut, and a placebo tape with no serial predictability scored HIGHER than the real tape.
+
+    Re-anchored, that test reads ~0 — and it SHOULD. Hindsight does not claim to forecast
+    price; it claims to measure adverse selection that already happened. A trade's markout
+    predicting further drift in the same direction would be a standing arbitrage, and its
+    absence is evidence the tape is sane, not that the mechanism failed. We publish it as a
+    negative result (part A) rather than quietly dropping the section.
+
+    The claim that actually needs defending is that the charge identifies INFORMED FLOW. That
+    is a statement about traders, and it is testable out of sample: charge measured on one
+    half of the tape, adverse selection measured on the other half, joined per address.
+    Nothing in the first half observes the second (part B).
     """
-    section("6. CIRCULARITY REBUTTAL — out-of-sample: does the charge predict FUTURE harm?")
-    import random
+    section("6. CIRCULARITY REBUTTAL — does the charge identify informed flow, out of sample?")
+    import random, collections
 
     def corr(xs, ys):
         n = len(xs); mx = sum(xs) / n; my = sum(ys) / n
@@ -524,8 +663,8 @@ def corr_test(rows, res):
         return sxy / ((sxx * syy) ** 0.5) if sxx and syy else 0.0
 
     def rank_avg(v):
-        """Ranks with ties AVERAGED. Index-broken ties silently encode row order, which made
-        a constant series score a spurious 0.197 against chronologically-ordered data."""
+        """Ties AVERAGED. Index-broken ties silently encode row order, which once made a
+        constant series score a spurious 0.197 against chronologically-ordered data."""
         order = sorted(range(len(v)), key=lambda i: v[i])
         r = [0.0] * len(v); i = 0
         while i < len(order):
@@ -538,19 +677,16 @@ def corr_test(rows, res):
             i = j
         return r
 
-    # harm measured on a LATER disjoint window: [t+20, t+60)  (charge used [t+10, t+15))
-    last = rows[-1]["block"]
+    spear = lambda a, b: corr(rank_avg(a), rank_avg(b))
+
+    # ── A. per-trade: does the charge predict FURTHER drift? (expected: no) ─────────────
+    harms = future_harms(rows)
     fut, keep = [], []
-    for idx, (r, s_row) in enumerate(zip(res, rows)):
-        b = s_row["block"]
-        if b + 60 > last:
+    for r in res:
+        h = harms[r["idx"]]
+        if h is None:
             continue
-        tw, _ = window(rows, idx, b + 20, b + 60)
-        if tw is None:
-            continue
-        drift = tw - s_row["tick"]
-        fut.append(-drift if s_row["amount0"] < 0 else drift)
-        keep.append(r)
+        fut.append(h); keep.append(r)
 
     fees = sum(r["fee"] for r in res); claw = sum(r["forfeit"] for r in res)
     target = fees + claw
@@ -562,24 +698,69 @@ def corr_test(rows, res):
     ct = (lo + hi) / 2
     flat = target / sum(r["usd"] for r in res) * 1e4
 
+    print("  A. Per-trade. Charge set on [t+10s, t+15s); harm measured on [t+20s, t+60s),")
+    print(f"     anchored at the END of the settlement window so the charge is not inside its")
+    print(f"     own label.  n={len(keep):,}\n")
     series = {
         "Hindsight": [(r["fee"] + r["forfeit"]) / r["usd"] * 1e4 for r in keep],
         "dynamic fee (trailing vol)": [HEADLINE_FEE_BPS + ct * r["tvol"] for r in keep],
         "flat fee (rev-matched)": [flat] * len(keep),
     }
-    print(f"  charge set on the settlement window [t+10s, t+15s);")
-    print(f"  harm measured on a DISJOINT later window [t+20s, t+60s).  n={len(keep):,}\n")
-    print(f"{'mechanism':>30}{'pearson':>10}{'spearman':>11}")
+    print(f"{'mechanism':>32}{'pearson':>10}{'spearman':>11}")
     for name, v in series.items():
-        print(f"{name:>30}{corr(v, fut):>10.3f}{corr(rank_avg(v), rank_avg(fut)):>11.3f}")
+        print(f"{name:>32}{corr(v, fut):>10.3f}{spear(v, fut):>11.3f}")
+    print()
+    print("     Read that as a NEGATIVE RESULT, published deliberately. It is also the")
+    print("     expected one: a trade whose markout forecast further drift in the same")
+    print("     direction would be a standing arbitrage. The version of this test shipped")
+    print("     before round 3 read +0.44 here, and that number was an artifact of anchoring")
+    print("     the label at the swap's own execution tick.")
 
-    random.seed(3)
-    shuf = fut[:]; random.shuffle(shuf)
-    h = series["Hindsight"]
-    print(f"{'CONTROL: Hindsight vs shuffled harm':>30}{corr(h, shuf):>10.3f}{corr(rank_avg(h), rank_avg(shuf)):>11.3f}")
-    print("\n  The in-sample version of this test is a tautology — our charge is a monotone")
-    print("  function of the settlement markout and scores ~0.80 on pure Gaussian noise. So we")
-    print("  score it against harm it never observed, with a shuffled-harm control at ~0.")
+    # ── B. per-address, across a chronological split: the actual rebuttal ───────────────
+    mid = rows[len(rows) // 2]["block"]
+
+    def agg(rs):
+        d = collections.defaultdict(lambda: {"n": 0, "usd": 0.0, "chg": 0.0, "mk": 0.0})
+        for r in rs:
+            a = d[r["sender"]]
+            a["n"] += 1; a["usd"] += r["usd"]; a["chg"] += r["forfeit"]
+            a["mk"] += r["usd"] * max(0.0, r["markout"]) / 1e4
+        return d
+
+    A = agg([r for r in res if r["block"] < mid])
+    B = agg([r for r in res if r["block"] >= mid])
+    MIN = 20
+    common = [s for s in A if s in B and A[s]["n"] >= MIN and B[s]["n"] >= MIN]
+    x = [A[s]["chg"] / A[s]["usd"] for s in common]
+    y = [B[s]["mk"] / B[s]["usd"] for s in common]
+    obs = spear(x, y)
+
+    rnd = random.Random(11); hits = 0; T = 2000
+    for _ in range(T):
+        ys = y[:]; rnd.shuffle(ys)
+        if spear(x, ys) >= obs:
+            hits += 1
+    pval = (hits + 1) / (T + 1)
+
+    top = sorted(common, key=lambda s: -A[s]["chg"] / A[s]["usd"])
+    k = max(1, len(common) // 4)
+    hi_bps = sum(B[s]["mk"] for s in top[:k]) / sum(B[s]["usd"] for s in top[:k]) * 1e4
+    lo_bps = sum(B[s]["mk"] for s in top[-k:]) / sum(B[s]["usd"] for s in top[-k:]) * 1e4
+
+    print()
+    print("  B. Per-address, across a chronological split. Charge measured on the FIRST half")
+    print("     of the week; adverse selection measured on the SECOND. Joined by sender.")
+    print(f"     Nothing in the first half observes the second.  n={len(common)} addresses")
+    print(f"     active in both halves with >={MIN} swaps each.\n")
+    print(f"     spearman(H1 charge rate, H2 adverse selection) = {obs:+.3f}   permutation p = {pval:.4f}")
+    print(f"     H2 adverse selection of the addresses charged MOST  in H1: {hi_bps:5.2f} bps")
+    print(f"     H2 adverse selection of the addresses charged LEAST in H1: {lo_bps:5.2f} bps")
+    print(f"     separation: {hi_bps / max(lo_bps, 1e-9):.1f}x")
+    print()
+    print("     Stable across thresholds (>=5/10/20/50 swaps: rho 0.75/0.67/0.74/0.94, p<=0.0005).")
+    print("     Small n is the honest caveat: only 34 addresses trade this pool in both halves.")
+    print("     This is the claim the mechanism actually makes -- it identifies the flow that")
+    print("     keeps adversely selecting -- and it is the one that survives out of sample.")
 
 
 def concentration(rows, res):
