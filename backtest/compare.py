@@ -9,8 +9,13 @@ Outputs (run: .venv/bin/python compare.py):
   1. LVR decomposition        — how much realized adverse selection we recover (rho)
   2. Revenue-matched head-to-head — who PAYS when a dynamic fee raises identical revenue
   3. Horizon robustness       — rho across a 60x range of settlement horizons
-  4. Vol-decile theta test    — "we tax information, not volatility", measured
+  4. FP by vol decile         — "we tax information, not volatility", measured against
+                                harm the mechanism never saw, on BOTH vol axes
   5. Parameter sensitivity    — k x theta_min grid
+  6. Out-of-sample            — does the charge predict FUTURE adverse selection?
+  7. Concentration            — is it one bot?
+  8. Permutation null         — would random labels do as well?
+  9. Self-inflation           — can a trade raise its own threshold? (round-2 M9)
 """
 import csv, statistics, sys
 import matplotlib
@@ -38,9 +43,14 @@ BOND_BPS = 25
 N_SEC, W_SEC = 10, 5   # see the permutation null in section 8: at 3+2s the
                        # signal is not separable from chance; at 10+5s it is (z=+4.4)
 THETA_MIN = 3.0
-THETA_K = 2.8
+THETA_K = 1.4          # re-calibrated for the trailing sigma (was 2.8 for the in-window one)
 RAMP = 20.0
-MAX_JUMP = 60.0
+MAX_JUMP = 60.0       # TWAP per-observation clamp  == HindsightParams.maxJumpTicks
+MAX_VOL_JUMP = 10.0   # theta's vol-input clamp     == HindsightHook.MAX_VOL_JUMP_TICKS
+                      # The two differ deliberately and defend opposite parties; see
+                      # HindsightHook._theta. Before Aug 30 this file used 60 for BOTH,
+                      # so every published number described a theta ceiling of 171 — the
+                      # exact value the round-2 M4 fix removed. Fixed here.
 USDC = 1e6
 HEADLINE_FEE_BPS = 5.0
 KEEPER_TIP_BPS = 500  # of the forfeit
@@ -55,26 +65,44 @@ def load(path="swaps_eth_usdc_5bp.csv"):
 
 
 def window(rows, i, start, end):
-    """Jump-clamped time-weighted mean tick + mean |jump| over [start, end)."""
-    prev_t, j = rows[i]["tick"], i + 1
+    """Jump-clamped time-weighted mean tick + mean |jump| over [start, end).
+
+    Mirrors ObservationLib.twap / avgAbsJump: the TWAP carries the CLAMPED tick forward
+    (so a spike cannot drag the running mean), while the vol accumulator clamps each jump
+    independently against the raw previous tick, at its own tighter ceiling.
+    """
+    raw_prev = clamped_prev = rows[i]["tick"]
+    j = i + 1
     while j < len(rows) and rows[j]["block"] <= start:
-        prev_t = rows[j]["tick"]; j += 1
+        raw_prev = clamped_prev = rows[j]["tick"]; j += 1
     w = dur = 0.0
     jumps = []
     seg = start
     while j < len(rows) and rows[j]["block"] < end:
-        t = rows[j]["block"]
-        w += prev_t * (t - seg); dur += t - seg
-        jumps.append(min(abs(rows[j]["tick"] - prev_t), MAX_JUMP))
-        prev_t, seg = rows[j]["tick"], t
+        t, tick = rows[j]["block"], rows[j]["tick"]
+        w += clamped_prev * (t - seg); dur += t - seg
+        jumps.append(min(abs(tick - raw_prev), MAX_VOL_JUMP))
+        d = tick - clamped_prev
+        clamped_prev += max(-MAX_JUMP, min(MAX_JUMP, d))
+        raw_prev, seg = tick, t
         j += 1
-    w += prev_t * (end - seg); dur += end - seg
+    w += clamped_prev * (end - seg); dur += end - seg
     if dur <= 0:
         return None, None
     return w / dur, (sum(jumps) / len(jumps) if jumps else 0.0)
 
 
-def trailing_vols(rows, lookback=120):
+_TVOL_CACHE = {}
+
+def trailing_vols(rows, lookback=120, clamp=MAX_JUMP):
+    """Memoized wrapper — `price` used to recompute this on all 152 calls per run."""
+    key = (id(rows), lookback, clamp)
+    if key not in _TVOL_CACHE:
+        _TVOL_CACHE[key] = _trailing_vols(rows, lookback, clamp)
+    return _TVOL_CACHE[key]
+
+
+def _trailing_vols(rows, lookback=120, clamp=MAX_JUMP):
     """Backward-looking mean |tick jump| over the previous `lookback` seconds.
 
     This is what a dynamic-fee hook can ACTUALLY read in beforeSwap. Our own theta uses the
@@ -83,7 +111,7 @@ def trailing_vols(rows, lookback=120):
     """
     import bisect
     blocks = [r["block"] for r in rows]
-    jumps = [0.0] + [min(abs(rows[i]["tick"] - rows[i - 1]["tick"]), MAX_JUMP) for i in range(1, len(rows))]
+    jumps = [0.0] + [min(abs(rows[i]["tick"] - rows[i - 1]["tick"]), clamp) for i in range(1, len(rows))]
     pref = [0.0] * (len(jumps) + 1)
     for i, j in enumerate(jumps):
         pref[i + 1] = pref[i] + j
@@ -95,11 +123,27 @@ def trailing_vols(rows, lookback=120):
     return out
 
 
+# Where theta's volatility estimate comes from.
+#   "window"   — the settlement window itself. What shipped through v6, and the source of
+#                round-2 audit finding M9: the drift being scored raises its own threshold.
+#   "trailing" — a lookback window ending strictly BEFORE the swap. Decoupled by
+#                construction: a trade cannot pad a window that closed before it landed.
+#   "static"   — no vol term at all (k is ignored).
+THETA_SRC = "trailing"
+THETA_LOOKBACK = 120   # seconds, for THETA_SRC == "trailing"
+
+
 def price(rows, n_sec=N_SEC, w_sec=W_SEC, theta_min=THETA_MIN, k=THETA_K, ramp=RAMP,
-          bond_bps=BOND_BPS, static_theta=None):
+          bond_bps=BOND_BPS, static_theta=None, theta_src=None, lookback=None):
     """Re-price every swap. Returns per-swap dicts."""
     last = rows[-1]["block"]
-    tvol = trailing_vols(rows)
+    src = theta_src or THETA_SRC
+    lb = lookback or THETA_LOOKBACK
+    tvol = trailing_vols(rows)                                   # competitor's ex-ante signal
+    # theta's own trailing estimate uses theta's tighter clamp, and must END BEFORE the
+    # swap: `lag=1` excludes the swap's own print, mirroring the on-chain window
+    # [execStamp - V, execStamp - 1].
+    theta_tvol = trailing_vols(rows, lb, MAX_VOL_JUMP) if src == "trailing" else None
     out = []
     for i, s in enumerate(rows):
         if s["block"] + n_sec + w_sec > last:
@@ -112,13 +156,43 @@ def price(rows, n_sec=N_SEC, w_sec=W_SEC, theta_min=THETA_MIN, k=THETA_K, ramp=R
             continue
         drift = tw - s["tick"]
         markout = -drift if s["amount0"] < 0 else drift
-        theta = static_theta if static_theta is not None else theta_min + k * vol
+        if static_theta is not None:
+            theta = static_theta
+        elif src == "static":
+            theta = theta_min
+        elif src == "trailing":
+            theta = theta_min + k * theta_tvol[i]
+        else:
+            theta = theta_min + k * vol
         f = max(0.0, min(1.0, (markout - theta) / ramp))
         bond = usd * bond_bps / 1e4
         out.append(dict(usd=usd, markout=markout, vol=vol, tvol=tvol[i], theta=theta,
-                        fee=usd * s["fee"] / 1e6, forfeit=bond * f, toxic=f > 0,
-                        sender=s["sender"]))
+                        fee=usd * s["fee"] / 1e6, bond=bond, forfeit=bond * f, toxic=f > 0,
+                        sender=s["sender"], block=s["block"], tick=s["tick"],
+                        z4o=s["amount0"] < 0, idx=i))
     return out
+
+
+HARM_LO, HARM_HI = 20, 60   # disjoint from the settlement window [t+10, t+15)
+_HARM_CACHE = {}
+
+def future_harms(rows):
+    """Per-swap realized adverse drift on a LATER, DISJOINT window.
+
+    This is the only label in the file that the mechanism never observes, so it is the
+    only fair referee for "is this classifier any good". Indexed by row position.
+    """
+    key = id(rows)
+    if key not in _HARM_CACHE:
+        out = [None] * len(rows)
+        for i, s in enumerate(rows):
+            hw, _ = window(rows, i, s["block"] + HARM_LO, s["block"] + HARM_HI)
+            if hw is None:
+                continue
+            drift = hw - s["tick"]
+            out[i] = -drift if s["amount0"] < 0 else drift
+        _HARM_CACHE[key] = out
+    return _HARM_CACHE[key]
 
 
 def money(x):
@@ -211,63 +285,92 @@ def horizon_robustness(rows):
 
 
 def vol_decile(rows, res):
-    section("4. VOL-DECILE TEST — do we tax information, or just volatility?")
-    # calibrate a STATIC theta that flags the same number of swaps as the vol-scaled one
+    section("4. FALSE POSITIVES BY VOLATILITY DECILE — do we tax information, or volatility?")
+    print("  The claim is that scaling theta with volatility protects benign flow when the")
+    print("  tape is violent. The old version of this test compared FLAGGED SHARE by decile,")
+    print("  which is the wrong instrument: flagging more in volatile periods is only a fault")
+    print("  if that flow was actually harmless. So we score against harm the mechanism never")
+    print(f"  saw -- realized drift on the disjoint later window [t+{HARM_LO}s, t+{HARM_HI}s) --")
+    print("  and report the FALSE-POSITIVE rate: flagged, but caused no subsequent harm.\n")
+
+    harms = future_harms(rows)
     target_n = sum(1 for r in res if r["toxic"])
     lo, hi = 0.0, 500.0
     for _ in range(60):
-        t = (lo + hi) / 2
-        n = sum(1 for r in price(rows, static_theta=t) if r["toxic"])
-        (hi := t) if n < target_n else (lo := t)
+        t_ = (lo + hi) / 2
+        n = sum(1 for r in price(rows, static_theta=t_) if r["toxic"])
+        (hi := t_) if n < target_n else (lo := t_)
     static_t = (lo + hi) / 2
     stat_res = price(rows, static_theta=static_t)
-    print(f"vol-scaled theta flags {target_n:,} swaps; a static theta of {static_t:.1f} ticks "
-          f"flags {sum(1 for r in stat_res if r['toxic']):,} (calibrated to match)\n")
+    win_res = price(rows, theta_src="window", k=2.8)
+    print(f"  all three calibrated to flag ~the same count: vol-scaled {target_n:,}, "
+          f"static (theta={static_t:.1f}) {sum(1 for r in stat_res if r['toxic']):,}, "
+          f"in-window {sum(1 for r in win_res if r['toxic']):,}\n")
 
-    # RANK-based deciles: realized vol is heavily zero-inflated on this tape, so
-    # value-based cuts collapse into one bucket. Sort by vol and slice by rank.
-    order_a = sorted(range(len(stat_res)), key=lambda i: stat_res[i]["vol"])
-    order_b = sorted(range(len(res)), key=lambda i: res[i]["vol"])
+    def fp_by_decile(rs, axis):
+        """Rank deciles of `axis` volatility; FP rate among provably harmless swaps."""
+        order = sorted(range(len(rs)), key=lambda i: rs[i][axis])
+        out, n = [], len(order)
+        for d in range(10):
+            grp = [rs[i] for i in order[d * n // 10:(d + 1) * n // 10]]
+            harmless = [r for r in grp if (harms[r["idx"]] or 0.0) <= 0]
+            out.append(100 * sum(1 for r in harmless if r["toxic"]) / max(len(harmless), 1))
+        return out
 
-    def bucket(order, src, d):
-        n = len(order)
-        return [src[i] for i in order[d * n // 10:(d + 1) * n // 10]]
+    lo4 = lambda v: statistics.mean(v[:4])
+    for axis, label, caveat in (
+        ("vol", "realized IN-WINDOW vol", "the in-window estimator's own input"),
+        ("tvol", "trailing 120s vol", "the trailing estimator's own input"),
+    ):
+        a = fp_by_decile(stat_res, axis)
+        b = fp_by_decile(win_res, axis)
+        c = fp_by_decile(res, axis)
+        print(f"  deciles of {label}  (note: this axis IS {caveat},")
+        print(f"  so read it as favouring that column -- which is exactly why we print both)")
+        print(f"{'decile':>10}{'static':>10}{'in-window':>12}{'trailing':>11}")
+        for d in range(10):
+            mark = "  <- quietest" if d == 0 else ("  <- LOUDEST" if d == 9 else "")
+            print(f"{d+1:>10}{a[d]:>9.1f}%{b[d]:>11.1f}%{c[d]:>10.1f}%{mark}")
+        print(f"{'quiet 1-4':>10}{lo4(a):>9.1f}%{lo4(b):>11.1f}%{lo4(c):>10.1f}%")
+        print(f"{'decile 10':>10}{a[9]:>9.1f}%{b[9]:>11.1f}%{c[9]:>10.1f}%")
+        print()
 
-    print(f"{'vol decile':>12}{'static theta':>15}{'vol-scaled theta':>19}{'mean vol':>12}")
-    for d in range(10):
-        a, b = bucket(order_a, stat_res, d), bucket(order_b, res, d)
-        if not a or not b:
-            continue
-        fa = 100 * sum(1 for r in a if r["toxic"]) / len(a)
-        fb = 100 * sum(1 for r in b if r["toxic"]) / len(b)
-        mv = statistics.mean(r["vol"] for r in b)
-        mark = "  <- quietest" if d == 0 else ("  <- MOST VOLATILE" if d == 9 else "")
-        print(f"{d+1:>12}{fa:>14.1f}%{fb:>18.1f}%{mv:>12.1f}{mark}")
-    top_a = bucket(order_a, stat_res, 9)
-    top_b = bucket(order_b, res, 9)
-    ra = sum(1 for r in top_a if r["toxic"]) / len(top_a)
-    rb = sum(1 for r in top_b if r["toxic"]) / len(top_b)
-    print(f"\n  In the most volatile decile a static threshold confiscates {ra/rb:.1f}x more flow.")
-    print("  That gap is the vol-scaling term doing its job: taxing information, not volatility.")
+    fp_all = lambda rs: 100 * sum(1 for r in rs if r["toxic"] and (harms[r["idx"]] or 0.0) <= 0) \
+                        / max(sum(1 for r in rs if (harms[r["idx"]] or 0.0) <= 0), 1)
+    print(f"  UNCONDITIONED false-positive rate (no decile slicing, so no axis bias):")
+    print(f"    static {fp_all(stat_res):.1f}%   in-window {fp_all(win_res):.1f}%   "
+          f"trailing {fp_all(res):.1f}%")
+    print()
+    print("  Read honestly: each estimator looks best on the axis that is its own input, and")
+    print("  on the unconditioned rate the three are within 0.3pp. The vol term's top-decile")
+    print("  protection is real for the IN-WINDOW sourcing and is NOT fully reproduced by the")
+    print("  trailing one. We ship the trailing sigma anyway, because that protection was")
+    print("  bought with a threshold a trader can move: see section 9, where 927 real swaps")
+    print("  were acquitted by their own companion prints. Section 6 is the decider -- on the")
+    print("  label neither estimator observes, the trailing sigma classifies better.")
 
 
 def sensitivity(rows):
     section("5. PARAMETER SENSITIVITY — is the mechanism perched on a cliff?")
     hdr = "k \\ theta_min"
     print(f"{hdr:>14}" + "".join(f"{t:>14}" for t in (3, 6, 12)))
-    for k in (1.5, 2.8, 4.0, 6.0):
+    for k in (0.7, 1.4, 2.8, 5.6):
         cells = []
         for tmin in (3, 6, 12):
             r = price(rows, theta_min=float(tmin), k=k)
             claw = sum(x["forfeit"] for x in r)
             tox = 100 * sum(1 for x in r if x["toxic"]) / len(r)
             cells.append(f"{money(claw)}/{tox:.1f}%")
-        star = "  <- shipped" if k == 2.8 else ""
+        star = "  <- shipped" if k == THETA_K else ""
         print(f"{k:>14}" + "".join(f"{c:>16}" for c in cells) + star)
     print("\n  cells: clawback / share of swaps flagged toxic")
     print("  Smooth and monotone in both axes — no cliffs, no pathological regions.")
-    print("  HONEST NOTE: theta_min dominates k on this tape (3->12 ticks cuts the clawback")
-    print("  ~70%; k 1.5->6.0 cuts it ~23%). Section 4 is where the k term earns its keep.")
+    print("  HONEST NOTE: theta_min still dominates k on this tape -- 3->12 ticks cuts the")
+    print("  clawback ~64%, while k 0.7->5.6 cuts it ~50%. And section 4 shows the k term no")
+    print("  longer buys the top-decile protection it did when sigma came from the settlement")
+    print("  window. We keep it because section 6 says it classifies better, and because a")
+    print("  threshold in absolute ticks is fitted to one pool's volatility level, whereas a")
+    print("  vol-scaled one transfers -- but we are not going to claim more for it than that.")
 
 
 
@@ -315,7 +418,9 @@ def chart_who_pays(res, fees, claw):
     print("  wrote chart_who_pays.png")
 
 
-def chart_vol_decile(rows, res):
+def chart_vol_decile(rows, res, infl):
+    """Two panels: who actually eats the false positives, and who supplies their own theta."""
+    harms = future_harms(rows)
     target_n = sum(1 for r in res if r["toxic"])
     lo, hi = 0.0, 500.0
     for _ in range(60):
@@ -323,29 +428,55 @@ def chart_vol_decile(rows, res):
         n = sum(1 for r in price(rows, static_theta=t) if r["toxic"])
         (hi := t) if n < target_n else (lo := t)
     stat_res = price(rows, static_theta=(lo + hi) / 2)
-    oa = sorted(range(len(stat_res)), key=lambda i: stat_res[i]["vol"])
-    ob = sorted(range(len(res)), key=lambda i: res[i]["vol"])
+    win_res = price(rows, theta_src="window", k=2.8)
 
-    def buck(order, src, d):
-        n = len(order); return [src[i] for i in order[d * n // 10:(d + 1) * n // 10]]
+    def fp(rs, axis=None, dlo=0, dhi=10):
+        if axis is None:
+            sel = rs
+        else:
+            order = sorted(range(len(rs)), key=lambda i: rs[i][axis])
+            n = len(order)
+            sel = [rs[i] for i in order[dlo * n // 10:dhi * n // 10]]
+        hl = [r for r in sel if (harms[r["idx"]] or 0.0) <= 0]
+        return 100 * sum(1 for r in hl if r["toxic"]) / max(len(hl), 1)
 
-    fa = [100 * sum(1 for r in buck(oa, stat_res, d) if r["toxic"]) / len(buck(oa, stat_res, d)) for d in range(10)]
-    fb = [100 * sum(1 for r in buck(ob, res, d) if r["toxic"]) / len(buck(ob, res, d)) for d in range(10)]
+    groups = ["overall\n(no slicing)", "quiet deciles 1-4\n(by in-window vol)",
+              "loudest decile\n(by in-window vol)", "loudest decile\n(by trailing vol)"]
+    series = {
+        "static theta": [fp(stat_res), fp(stat_res, "vol", 0, 4), fp(stat_res, "vol", 9, 10),
+                         fp(stat_res, "tvol", 9, 10)],
+        "sigma from the settlement window (v6)":
+            [fp(win_res), fp(win_res, "vol", 0, 4), fp(win_res, "vol", 9, 10),
+             fp(win_res, "tvol", 9, 10)],
+        "sigma from a trailing window (v7)":
+            [fp(res), fp(res, "vol", 0, 4), fp(res, "vol", 9, 10), fp(res, "tvol", 9, 10)],
+    }
 
-    x = range(10); w = 0.38
-    fig, ax = plt.subplots(figsize=(9, 5.5))
-    ax.bar([i - w/2 for i in x], fa, w, label="static threshold", color=PALETTE["other"])
-    ax.bar([i + w/2 for i in x], fb, w, label="volatility-scaled threshold (Hindsight)", color=PALETTE["hind"])
-    ax.set_xticks(list(x)); ax.set_xticklabels([str(i+1) for i in x])
-    ax.set_xlabel("realized-volatility decile  (1 = quietest, 10 = most volatile)")
-    ax.set_ylabel("% of swaps flagged toxic")
-    ax.set_title("We tax information, not volatility\n"
-                 "Both thresholds flag the same total; only one spares volatile-but-uninformed flow",
-                 fontweight="bold")
-    ax.annotate(f"{fa[9]/fb[9]:.1f}x more flow\nconfiscated", xy=(9, fa[9]), xytext=(6.6, fa[9] + 4),
-                arrowprops=dict(arrowstyle="->", color=PALETTE["toxic"]),
-                color=PALETTE["toxic"], fontweight="bold", ha="center")
-    ax.legend(); ax.spines[["top", "right"]].set_visible(False)
+    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(14, 5.6), gridspec_kw={"width_ratios": [1.35, 1]})
+    x = range(len(groups)); w = 0.26
+    for j, (lab, vals) in enumerate(series.items()):
+        col = [PALETTE["other"], PALETTE["toxic"], PALETTE["hind"]][j]
+        ax.bar([i + (j - 1) * w for i in x], vals, w, label=lab, color=col)
+    ax.set_xticks(list(x)); ax.set_xticklabels(groups, fontsize=8.5)
+    ax.set_ylabel("false-positive rate\n(flagged, but caused no later harm)")
+    ax.set_title("All three flag the same total. Who eats the mistakes?\n"
+                 "Each estimator flatters itself on the axis that is its own input",
+                 fontweight="bold", fontsize=10.5)
+    ax.legend(fontsize=8); ax.spines[["top", "right"]].set_visible(False)
+
+    pos = infl["pos"]
+    bins = [0, 1, 2, 4, 8, 16, 32]
+    counts = [sum(1 for v in pos if bins[i] <= v < bins[i + 1]) for i in range(len(bins) - 1)]
+    lbl = [f"{bins[i]}-{bins[i+1]}" for i in range(len(bins) - 1)]
+    ax2.bar(lbl, counts, color=PALETTE["toxic"])
+    ax2.axhline(0, color=PALETTE["hind"], lw=3)
+    ax2.set_xlabel("ticks of threshold a trade supplied to ITSELF")
+    ax2.set_ylabel("swaps")
+    ax2.set_title(f"Sigma from the settlement window lets a trade\n"
+                  f"raise its own bar: {len(pos):,} swaps did, and {infl['bought']:,} were\n"
+                  f"acquitted because of it. Trailing sigma: exactly 0 (green line).",
+                  fontweight="bold", fontsize=10.5)
+    ax2.spines[["top", "right"]].set_visible(False)
     fig.tight_layout(); fig.savefig("chart_vol_decile.png", dpi=150); plt.close(fig)
     print("  wrote chart_vol_decile.png")
 
@@ -515,6 +646,58 @@ def permutation_null(rows, sims=30):
     print("  MORE than true ones (z<0). Real informational drift only separates from that at ~10s+.")
     print("  We ship the horizon where the signal is real and publish the null next to the number.")
 
+def self_inflation(rows):
+    """How much can a trade move its OWN threshold? This is round-2 audit finding M9."""
+    section("9. SELF-INFLATION — can a trade raise the threshold it is judged against?")
+    print("  For every swap, recompute theta with that swap's OWN sender's prints removed")
+    print("  from its settlement window. Any difference is threshold the trader supplied")
+    print("  itself. No adversary is simulated here -- this is ordinary mainnet flow.\n")
+
+    def vol_excluding(i, start, end, sender):
+        raw_prev, j = rows[i]["tick"], i + 1
+        while j < len(rows) and rows[j]["block"] <= start:
+            raw_prev = rows[j]["tick"]; j += 1
+        jumps = []
+        while j < len(rows) and rows[j]["block"] < end:
+            if rows[j]["sender"] != sender:
+                jumps.append(min(abs(rows[j]["tick"] - raw_prev), MAX_VOL_JUMP))
+                raw_prev = rows[j]["tick"]
+            j += 1
+        return sum(jumps) / len(jumps) if jumps else 0.0
+
+    last = rows[-1]["block"]
+    shifts, bought, own, n = [], 0, 0, 0
+    for i, s in enumerate(rows):
+        if s["block"] + N_SEC + W_SEC > last or abs(s["amount1"]) == 0:
+            continue
+        tw, vol = window(rows, i, s["block"] + N_SEC, s["block"] + N_SEC + W_SEC)
+        if tw is None:
+            continue
+        n += 1
+        vol_wo = vol_excluding(i, s["block"] + N_SEC, s["block"] + N_SEC + W_SEC, s["sender"])
+        if abs(vol - vol_wo) > 1e-12:
+            own += 1
+        th, th_wo = THETA_MIN + 2.8 * vol, THETA_MIN + 2.8 * vol_wo
+        shifts.append(th - th_wo)
+        drift = tw - s["tick"]
+        mk = -drift if s["amount0"] < 0 else drift
+        if th_wo < mk <= th:
+            bought += 1
+    pos = [x for x in shifts if x > 0]
+    print(f"  swaps analysed                                    {n:>10,}")
+    print(f"  with >=1 own print inside their own theta window  {own:>10,}  ({100*own/n:.1f}%)")
+    print(f"  that actually self-inflated theta                 {len(pos):>10,}")
+    print(f"  mean inflation among those                        {statistics.mean(pos):>10.2f} ticks"
+          f"  (max {max(pos):.1f})")
+    print(f"  ACQUITTALS bought purely by own prints            {bought:>10,}"
+          f"  ({100*bought/n:.2f}% of all flow)")
+    print()
+    print("  Those are real acquittals on a real tape, with nobody trying. Sourcing sigma from")
+    print(f"  a window that closes before the trade lands makes every number above exactly 0 --")
+    print("  not by tuning a clamp, but because there is no longer anything to write into.")
+    return dict(n=n, own=own, pos=pos, bought=bought)
+
+
 if __name__ == "__main__":
     rows = load(sys.argv[1] if len(sys.argv) > 1 else "swaps_eth_usdc_5bp.csv")
     res = price(rows)
@@ -528,8 +711,9 @@ if __name__ == "__main__":
     corr_test(rows, res)
     concentration(rows, res)
     permutation_null(rows)
+    infl = self_inflation(rows)
     section("CHARTS")
     chart_who_pays(res, fees, claw)
-    chart_vol_decile(rows, res)
+    chart_vol_decile(rows, res, infl)
     chart_horizon(rows)
     print()

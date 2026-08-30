@@ -1,10 +1,9 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-const STRIDE = 14;
+const STRIDE = 15;   // ... + trailing sigma at offset 14
 const HORIZON_LABELS = ["1+1s", "3+2s", "5+2s", "10+5s", "30+10s", "60+20s"];
 const HEADLINE_BPS = 5;
-const MAX_JUMP = 60;
 
 function Slider({ label, value, min, max, step, onChange, fmt, note }) {
   return (
@@ -27,7 +26,11 @@ export default function Explorer() {
 
   // parameters (defaults == the deployed hook)
   const [thetaMin, setThetaMin] = useState(3);
-  const [k, setK] = useState(2.8);
+  const [k, setK] = useState(1.4);
+  // Where sigma comes from. "trailing" is what v7 ships: a window that closes BEFORE the
+  // trade, so the trade cannot raise the bar it is judged against. "window" is v6's, kept
+  // here so you can flip it and watch the difference yourself.
+  const [sigmaSrc, setSigmaSrc] = useState("trailing");
   const [ramp, setRamp] = useState(20);
   const [bondBps, setBondBps] = useState(25);
   const [hz, setHz] = useState(3); // 10+5s == the deployed hook (N=50,W=25 flashblocks)
@@ -53,7 +56,8 @@ export default function Explorer() {
     for (let i = 0; i < n; i++) {
       const o = i * STRIDE;
       const usd = data[o], feeRate = data[o + 1];
-      const mk = data[o + 2 + hz], vol = data[o + 8 + hz];
+      const mk = data[o + 2 + hz];
+      const vol = sigmaSrc === "trailing" ? data[o + 14] : data[o + 8 + hz];
       const fee = usd * feeRate;
       const theta = thetaMin + k * vol;
       const f = Math.max(0, Math.min(1, (mk - theta) / ramp));
@@ -81,7 +85,8 @@ export default function Explorer() {
     let dynBen = 0, dynTox = 0;
     for (let i = 0; i < n; i++) {
       const o = i * STRIDE;
-      const usd = data[o], mk = data[o + 2 + hz], vol = data[o + 8 + hz];
+      const usd = data[o], mk = data[o + 2 + hz];
+      const vol = sigmaSrc === "trailing" ? data[o + 14] : data[o + 8 + hz];
       const f = Math.max(0, Math.min(1, (mk - (thetaMin + k * vol)) / ramp));
       const inc = usd * (c * vol) / 1e4;
       if (f > 0) dynTox += inc; else dynBen += inc;
@@ -102,10 +107,11 @@ export default function Explorer() {
       dynBenignShare: dynDegenerate ? null : 100 * dynBen / (dynBen + dynTox),
       dynBenignEff: dynDegenerate ? null : HEADLINE_BPS + c * (sumVolUsd / (benUsd + toxUsd)),
     };
-  }, [data, thetaMin, k, ramp, bondBps, hz]);
+  }, [data, thetaMin, k, ramp, bondBps, hz, sigmaSrc]);
 
-  const reset = () => { setThetaMin(3); setK(2.8); setRamp(20); setBondBps(25); setHz(3); };
-  const isDefault = thetaMin === 3 && k === 2.8 && ramp === 20 && bondBps === 25 && hz === 3;
+  const reset = () => { setThetaMin(3); setK(1.4); setRamp(20); setBondBps(25); setHz(3); setSigmaSrc("trailing"); };
+  const isDefault = thetaMin === 3 && k === 1.4 && ramp === 20 && bondBps === 25 && hz === 3
+    && sigmaSrc === "trailing";
 
   if (err) return <div className="card">Failed to load dataset: {err}</div>;
   if (!stats) return <div className="card">Loading 55,822 real mainnet swaps…</div>;
@@ -153,6 +159,28 @@ export default function Explorer() {
             <Slider label="settlement horizon" value={hz} min={1} max={5} step={1}
                     onChange={setHz} fmt={(v) => HORIZON_LABELS[v]}
                     note="maturity + TWAP window" />
+            <div style={{ marginTop: 18 }}>
+              <div className="row" style={{ justifyContent: "space-between", marginBottom: 6 }}>
+                <b style={{ fontSize: 13 }}>where &sigma; comes from</b>
+                <span className="muted" style={{ fontSize: 12 }}>
+                  {sigmaSrc === "trailing" ? "trailing 120s (v7)" : "settlement window (v6)"}
+                </span>
+              </div>
+              <div className="row" style={{ gap: 8 }}>
+                <button className={sigmaSrc === "trailing" ? "" : "ghost"}
+                        onClick={() => { setSigmaSrc("trailing"); setK(1.4); }}>before the trade</button>
+                <button className={sigmaSrc === "window" ? "" : "ghost"}
+                        onClick={() => { setSigmaSrc("window"); setK(2.8); }}>the settlement window</button>
+              </div>
+              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                v6 measured &sigma; over the same window it measured the markout, so a trader&apos;s
+                own companion prints raised the bar it was judged against — 927 swaps on this
+                tape were acquitted that way. v7 measures &sigma; over a window that closes
+                before the trade lands. Each source carries its own calibrated k (1.4 vs 2.8)
+                so the two flag the same share of flow — otherwise the comparison would just
+                be measuring which one is set more aggressively.
+              </div>
+            </div>
           </div>
         </div>
 

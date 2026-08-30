@@ -20,106 +20,30 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-def _open(path):
-    """Open a backtest CSV, transparently accepting the committed .gz form.
+# ── the pricing model lives in ONE place ────────────────────────────────────────────
+# This file used to carry its own byte-identical copy of _open/load/twap_and_vol plus a
+# second set of THETA_* constants, kept in step by a comment. They drifted anyway (the
+# vol clamp here said 60 while the hook said 10). Import instead, so there is exactly one
+# definition of what Hindsight charges and it cannot silently disagree with compare.py.
+from compare import (  # noqa: E402
+    _open, load, window, price,
+    BOND_BPS, N_SEC, W_SEC, THETA_MIN, THETA_K, RAMP, MAX_JUMP, MAX_VOL_JUMP,
+    USDC as USDC_DECIMALS, THETA_SRC, THETA_LOOKBACK,
+)
 
-    The repo ships `swaps_*.csv.gz` (2.0MB) rather than the 7.6MB raw CSV, so a
-    fresh clone can reproduce every published number with no fetch step.
-    """
-    import gzip, os
-    if os.path.exists(path):
-        return open(path)
-    if os.path.exists(path + ".gz"):
-        return gzip.open(path + ".gz", "rt")
-    raise FileNotFoundError(
-        f"{path} (and {path}.gz) not found — run `python3 fetch.py` to rebuild it"
-    )
+THETA_VOL_K = THETA_K   # back-compat alias for this file's chart labels
 
-
-
-# Hook default params (keep in sync with HindsightParams)
-BOND_BPS = 25
-N_SEC, W_SEC = 10, 5         # 50 + 25 flashblocks at 200ms — matches the live
-                             # deployment and compare.py. Section 8 of compare.py
-                             # shows the shorter 3+2s horizon does not beat a
-                             # random-label null (z=-1.68); 10+5s beats it by +4.5σ.
-THETA_MIN = 3.0              # ticks ≈ bps
-THETA_VOL_K = 2.8
-RAMP = 20.0
-MAX_JUMP = 60.0              # per-observation contribution cap (matches the hook)
-USDC_DECIMALS = 1e6          # token1 = USDC
-
-def load(path):
-    with _open(path) as f:
-        rows = list(csv.DictReader(f))
-    for r in rows:
-        for k in ("block", "tick", "amount0", "amount1", "fee"):
-            r[k] = int(r[k])
-    return rows
-
-CLAMP = True  # apply the hook's jump clamp to the volatility input (theta)
-
-def twap_and_vol(swaps, i, start, end):
-    """Time-weighted avg tick + mean |jump| over [start, end] (block seconds),
-    using the last swap tick at/before `start` as the entering price."""
-    prev_tick, prev_t = swaps[i]["tick"], swaps[i]["block"]
-    j = i + 1
-    weighted, duration, jumps = 0.0, 0.0, []
-    # advance to window start
-    while j < len(swaps) and swaps[j]["block"] <= start:
-        prev_tick, prev_t = swaps[j]["tick"], swaps[j]["block"]
-        j += 1
-    seg_start = start
-    while j < len(swaps) and swaps[j]["block"] < end:
-        t = swaps[j]["block"]
-        weighted += prev_tick * (t - seg_start)
-        duration += t - seg_start
-        jump = abs(swaps[j]["tick"] - prev_tick)
-        jumps.append(min(jump, MAX_JUMP) if CLAMP else jump)
-        prev_tick, seg_start = swaps[j]["tick"], t
-        j += 1
-    weighted += prev_tick * (end - seg_start)
-    duration += end - seg_start
-    if duration <= 0:
-        return None, None
-    vol = sum(jumps) / len(jumps) if jumps else 0.0
-    return weighted / duration, vol
 
 def replay(swaps, label):
     per_sender = defaultdict(lambda: {"n": 0, "toxic": 0, "volume": 0.0, "forfeit": 0.0, "markouts": []})
-    results = []
-    last_block = swaps[-1]["block"] if swaps else 0
-
-    for i, s in enumerate(swaps):
-        # skip tail swaps whose window extends past the dataset
-        if s["block"] + N_SEC + W_SEC > last_block:
-            continue
-        zero_for_one = s["amount0"] < 0
-        notional_usd = abs(s["amount1"]) / USDC_DECIMALS
-        if notional_usd == 0:
-            continue
-        twap, vol = twap_and_vol(swaps, i, s["block"] + N_SEC, s["block"] + N_SEC + W_SEC)
-        if twap is None:
-            continue  # missing data -> refund, excluded from toxic stats
-        drift = twap - s["tick"]
-        markout = -drift if zero_for_one else drift
-        theta = THETA_MIN + THETA_VOL_K * vol
-        excess = markout - theta
-        fwad = max(0.0, min(1.0, excess / RAMP))
-        bond = notional_usd * BOND_BPS / 10_000
-        forfeit = bond * fwad
-        fee_paid = notional_usd * s["fee"] / 1e6  # pool fee in hundredths of bps (1e6 = 100%)
-        results.append({
-            "block": s["block"], "sender": s["sender"], "usd": notional_usd,
-            "markout": markout, "theta": theta, "bond": bond, "forfeit": forfeit,
-            "fee": fee_paid, "toxic": fwad > 0,
-        })
-        ps = per_sender[s["sender"]]
+    results = price(swaps)   # the one shared model
+    for r in results:
+        ps = per_sender[r["sender"]]
         ps["n"] += 1
-        ps["volume"] += notional_usd
-        ps["forfeit"] += forfeit
-        ps["markouts"].append(markout)
-        if fwad > 0:
+        ps["volume"] += r["usd"]
+        ps["forfeit"] += r["forfeit"]
+        ps["markouts"].append(r["markout"])
+        if r["toxic"]:
             ps["toxic"] += 1
 
     if not results:

@@ -1,1 +1,1 @@
-{"n": 55822, "horizons": ["1+1s", "3+2s", "5+2s", "10+5s", "30+10s", "60+20s"], "stride": 14, "pool": "Unichain mainnet ETH/USDC 5bps", "days": 7, "bin": "explorer-data.bin"}
+{"n": 55822, "horizons": ["1+1s", "3+2s", "5+2s", "10+5s", "30+10s", "60+20s"], "stride": 15, "lookback": 120, "pool": "Unichain mainnet ETH/USDC 5bps", "days": 7, "bin": "explorer-data.bin"}
