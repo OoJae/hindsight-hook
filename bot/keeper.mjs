@@ -25,6 +25,7 @@ const TICK_MS = Number(process.env.TICK_MS ?? 4000);
 const hookAbi = parseAbi([
   'function currentStamp() view returns (uint48)',
   'function settle(uint256 swapId)',
+  'function finalize(uint256 swapId)',
   'function poke((address currency0,address currency1,uint24 fee,int24 tickSpacing,address hooks) key)',
   'function flushDonations(bytes32 id)',
   'function getSwap(uint256) view returns ((address trader,uint48 execStamp,bool zeroForOne,uint8 status,bytes32 poolId,uint128 notional,uint128 bond,bool bondIsCurrency0,int24 execTick))',
@@ -67,6 +68,11 @@ async function settleMatured() {
       continue;
     }
     try {
+      // Lock the verdict in first: the observation buffer is finite and poke() is
+      // permissionless, so finalising while the data exists removes any eviction race.
+      try {
+        await wallet.writeContract({ address: HOOK, abi: hookAbi, functionName: 'finalize', args: [id] });
+      } catch { /* already finalized, or nothing to lock */ }
       const tx = await wallet.writeContract({ address: HOOK, abi: hookAbi, functionName: 'settle', args: [id] });
       console.log(`[settle] #${id} (${tx.slice(0, 10)})`);
       settled.add(id);

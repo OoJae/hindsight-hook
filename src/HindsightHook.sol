@@ -118,6 +118,9 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         bool bondIsCurrency0;
         int24 execTick;
         bool attributed; // beneficiary is authenticated: reputation may be read/written
+        bool finalized;  // verdict locked in while the window's data still existed
+        int24 fMarkout;  // snapshotted markout  (valid iff finalized)
+        int24 fTheta;    // snapshotted theta    (valid iff finalized)
     }
 
     uint256 public nextSwapId;
@@ -312,7 +315,10 @@ contract HindsightHook is BaseHook, IUnlockCallback {
             bond: uint128(bond),
             bondIsCurrency0: isCurrency0,
             execTick: execTick,
-            attributed: attributed
+            attributed: attributed,
+            finalized: false,
+            fMarkout: 0,
+            fTheta: 0
         });
         emit SwapRecorded(swapId, id, trader, zeroForOne, uint128(absUnspec), uint128(bond), stamp, execTick);
     }
@@ -340,6 +346,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         if (r.trader == address(0)) revert UnknownSwap();
         if (r.status != 0) revert AlreadySettled();
         if (!_matured(r)) revert NotMatured();
+        finalize(swapId);
         _doSettle(swapId, r, msg.sender);
     }
 
@@ -353,6 +360,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     function _trySettle(uint256 swapId, address keeper) internal returns (bool) {
         SwapRecord storage r = swaps[swapId];
         if (r.trader == address(0) || r.status != 0 || !_matured(r)) return false;
+        finalize(swapId);
         _doSettle(swapId, r, keeper);
         return true;
     }
@@ -448,13 +456,42 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         if (nowStamp > windowEnd + p.graceStamps) {
             return (true, 1e18, 0, 0, false); // auto-forfeit: punitive, but not a measurement
         }
+        if (r.finalized) {
+            // Verdict was locked while the window's observations still existed.
+            markoutTicks = r.fMarkout;
+            thetaTicks = r.fTheta;
+            fWad = MarkoutLib.forfeitWad(markoutTicks, thetaTicks, int256(p.rampTicks));
+            return (fWad > 0, fWad, markoutTicks, thetaTicks, true);
+        }
         (int24 twapTick,, bool ok) = observations[r.poolId].twap(windowStart, windowEnd, p.maxJumpTicks);
-        if (!ok) return (false, 0, 0, 0, false); // no data: refund, reputation-neutral
+        if (!ok) {
+            // Distinguish "we never had data" from "the data existed and was destroyed".
+            // Eviction is cheap and permissionless, so rewarding it with a refund would let
+            // any toxic trade buy its way out; absent data must still refund, because
+            // withholding observations can never be allowed to punish a trader.
+            return _noDataVerdict(r.poolId, windowEnd);
+        }
         markoutTicks = MarkoutLib.markout(r.execTick, twapTick, r.zeroForOne);
         thetaTicks = _theta(r.poolId, p, windowStart, windowEnd);
         fWad = MarkoutLib.forfeitWad(markoutTicks, thetaTicks, int256(p.rampTicks));
         toxic = fWad > 0;
         graded = true;
+    }
+
+    /// @dev Was the window's data destroyed, or did it never exist? Evicting the ring buffer
+    ///      is cheap and permissionless, so an evicted window must NOT earn the missing-data
+    ///      refund — otherwise any toxic trade can buy its way out. A genuinely dataless
+    ///      window still refunds.
+    function _noDataVerdict(PoolId id, uint48 windowEnd)
+        internal
+        view
+        returns (bool, uint256, int256, int256, bool)
+    {
+        (uint48 oldestStamp, bool full) = observations[id].oldest();
+        if (full && oldestStamp > windowEnd) {
+            return (true, 1e18, 0, 0, false); // evicted: forfeit, ungraded
+        }
+        return (false, 0, 0, 0, false); // genuinely no data: refund, reputation-neutral
     }
 
     /// @dev Volatility-scaled toxicity threshold. The same jump clamp the TWAP uses is
@@ -549,6 +586,39 @@ contract HindsightHook is BaseHook, IUnlockCallback {
             poolManager.sync(c);
             c.transfer(address(poolManager), amount);
             poolManager.settle();
+        }
+    }
+
+    /// @notice Lock in a swap's verdict as soon as its settlement window closes.
+    /// @dev Permissionless and cheap. This exists because the observation buffer is finite
+    ///      and `poke()` is permissionless: without it, a toxic trader could flood the ring
+    ///      buffer after their window closed, destroy the observations that convicted them,
+    ///      and have `settle()` fall through to the missing-data refund. Finalising while the
+    ///      data still exists removes that race entirely. Keepers call this; `settle` also
+    ///      calls it implicitly, so the normal path is unchanged.
+    function finalize(uint256 swapId) public {
+        SwapRecord storage r = swaps[swapId];
+        if (r.trader == address(0)) revert UnknownSwap();
+        if (r.finalized || r.status != 0) return;
+        HindsightParams memory p = poolParams[r.poolId];
+        uint48 windowStart = r.execStamp + p.maturityStamps;
+        uint48 windowEnd = windowStart + p.twapWindowStamps;
+        if (currentStamp() < windowEnd) revert NotMatured();
+
+        (int24 twapTick,, bool ok) = observations[r.poolId].twap(windowStart, windowEnd, p.maxJumpTicks);
+        if (!ok) return; // genuinely no data yet — nothing to lock
+        r.fMarkout = int24(MarkoutLib.markout(r.execTick, twapTick, r.zeroForOne));
+        r.fTheta = int24(_theta(r.poolId, p, windowStart, windowEnd));
+        r.finalized = true;
+    }
+
+    /// @notice Finalize a batch of matured swaps (keeper convenience).
+    function finalizeBatch(uint256[] calldata swapIds) external {
+        for (uint256 i; i < swapIds.length; i++) {
+            SwapRecord storage r = swaps[swapIds[i]];
+            if (r.trader == address(0) || r.finalized || r.status != 0) continue;
+            if (!_matured(r)) continue;
+            finalize(swapIds[i]);
         }
     }
 
@@ -742,6 +812,12 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         uint48 windowStart = r.execStamp + p.maturityStamps;
         uint48 windowEnd = windowStart + p.twapWindowStamps;
         matured = currentStamp() >= windowEnd;
+        if (r.finalized) {
+            markoutTicks = r.fMarkout;
+            thetaTicks = r.fTheta;
+            forfeitWad_ = MarkoutLib.forfeitWad(markoutTicks, thetaTicks, int256(p.rampTicks));
+            return (matured, true, markoutTicks, thetaTicks, forfeitWad_);
+        }
         (int24 twapTick,, bool ok) = observations[r.poolId].twap(windowStart, windowEnd, p.maxJumpTicks);
         dataOk = ok;
         if (ok) {

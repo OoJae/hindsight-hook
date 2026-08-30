@@ -89,13 +89,15 @@ contract SettlementTest is HindsightFixture {
         }
     }
 
-    function test_missing_window_data_refunds() public {
+    /// Rotating the whole ring buffer DESTROYS evidence rather than lacking it. Round 2 of
+    /// the audit showed that rewarding this with a refund let any toxic trade buy its way
+    /// out, so an evicted window now forfeits; a genuinely dataless window still refunds
+    /// (see AuditRepro.test_M4a/M4b).
+    function test_evicted_window_does_not_earn_a_refund() public {
         swapAs(TRADER, true, -1e18);
         uint128 bond = hook.getSwap(0).bond;
         uint48 windowEnd = hook.getSwap(0).execStamp + 25;
 
-        // Rotate the entire ring buffer with observations AFTER the window, so no
-        // usable data covers it. Missing data must NEVER punish the trader.
         advanceTo(windowEnd + 1);
         for (uint256 i = 0; i < 130; i++) {
             fb.increment();
@@ -104,7 +106,7 @@ contract SettlementTest is HindsightFixture {
 
         uint256 before = bal1(TRADER);
         hook.settle(0);
-        assertEq(bal1(TRADER) - before, uint256(bond), "full refund on missing data");
+        assertLt(bal1(TRADER) - before, uint256(bond), "evicted evidence must not be rewarded");
     }
 
     function test_auto_forfeit_after_grace() public {

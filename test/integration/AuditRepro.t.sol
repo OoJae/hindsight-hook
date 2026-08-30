@@ -53,22 +53,57 @@ contract AuditReproTest is HindsightFixture {
         assertLt(theta, int256(400), "M3: theta must not be pumpable to absurd levels");
     }
 
-    /// M4: the observation ring buffer (128 slots) can be flushed by permissionless poke()
-    /// well inside the ~10min grace window. Data loss must REFUND, never punish.
-    function test_M4_buffer_flush_does_not_punish_trader() public {
+    /// M4 (round 1) refined by round 2: data loss must never PUNISH an honest trader, but
+    /// it must also never REWARD a toxic one. Round 2 found the original test asserted only
+    /// the first half — and the second half was exploitable: a toxic trader could flood the
+    /// permissionless poke() path, evict the observations that convicted them, and collect
+    /// the missing-data refund. Both halves are now asserted.
+    function test_M4a_genuinely_absent_data_refunds() public {
+        // A pool with no observation coverage for the window: the trader keeps their bond.
         uint256 id = hook.nextSwapId();
         swapAs(ARB, true, -1e18);
         uint128 bond = hook.getSwap(id).bond;
         advanceTo(pastWindow(id));
+        uint256 before = bal1(ARB);
+        hook.settle(id);
+        assertEq(bal1(ARB) - before, uint256(bond), "absent data must refund in full");
+    }
 
-        // flush the entire ring buffer with permissionless pokes, still inside grace
-        for (uint256 i; i < 130; i++) {
+    function test_M4b_evicted_data_cannot_buy_a_refund() public {
+        uint256 id = hook.nextSwapId();
+        swapAs(ARB, true, -1e18);
+        driftPrice(true, 20, -30e18); // genuinely toxic
+        uint128 bond = hook.getSwap(id).bond;
+        advanceTo(pastWindow(id));
+
+        // attacker floods the ring buffer to destroy the evidence
+        for (uint256 i; i < 140; i++) {
             fb.increment();
             hook.poke(key);
         }
+
         uint256 before = bal1(ARB);
         hook.settle(id);
-        assertEq(bal1(ARB) - before, uint256(bond), "M4: lost data must refund, not forfeit");
+        assertLt(bal1(ARB) - before, uint256(bond), "evicting the buffer must not earn a refund");
+    }
+
+    /// Finalisation locks the verdict while the data still exists, so the race above cannot
+    /// even start once a keeper has finalised.
+    function test_M4c_finalize_locks_the_verdict() public {
+        uint256 id = hook.nextSwapId();
+        swapAs(ARB, true, -1e18);
+        driftPrice(true, 20, -30e18);
+        advanceTo(pastWindow(id));
+
+        hook.finalize(id); // keeper locks it in
+        assertTrue(hook.getSwap(id).finalized, "verdict finalized");
+
+        for (uint256 i; i < 140; i++) {
+            fb.increment();
+            hook.poke(key);
+        }
+        (,,,, uint256 fWad) = hook.previewSettle(id);
+        assertGt(fWad, 0, "finalized verdict survives buffer eviction");
     }
 
     /// M5 (high): hookData is attacker-controlled, so a third party could attribute a toxic

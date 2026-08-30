@@ -151,6 +151,15 @@ library ObservationLib {
 
     /// @notice Newest stamp ≤ `at` exists? Used to check data coverage.
 
+    /// @notice Oldest retained observation. Used to tell "we never had data for this window"
+    ///         (refund) apart from "the data existed and was evicted" (do not reward).
+    function oldest(Buffer storage self) internal view returns (uint48 stamp, bool full) {
+        if (self.count == 0) return (0, false);
+        full = self.count == CARDINALITY;
+        uint16 idx = full ? self.index : 0;
+        return (self.obs[idx].stamp, full);
+    }
+
     /// @notice Newest observation (stamp, tick); ok=false when empty.
     function newest(Buffer storage self) internal view returns (uint48 stamp, int24 tick, bool ok) {
         if (self.count == 0) return (0, 0, false);
