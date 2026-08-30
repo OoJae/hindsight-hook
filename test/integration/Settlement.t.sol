@@ -96,7 +96,7 @@ contract SettlementTest is HindsightFixture {
     function test_evicted_window_does_not_earn_a_refund() public {
         swapAs(TRADER, true, -1e18);
         uint128 bond = hook.getSwap(0).bond;
-        uint48 windowEnd = hook.getSwap(0).execStamp + 25;
+        uint48 windowEnd = hook.getSwap(0).execStamp + 50 + 25;
 
         advanceTo(windowEnd + 1);
         for (uint256 i = 0; i < 130; i++) {
@@ -129,7 +129,7 @@ contract SettlementTest is HindsightFixture {
             fb.increment();
             hook.poke(key);
         }
-        advanceTo(hook.getSwap(0).execStamp + 25 + 3000 + 1);
+        advanceTo(hook.getSwap(0).execStamp + 75 + 3000 + 1);
         (, bool dataOk,,,) = hook.previewSettle(0);
         assertFalse(dataOk, "precondition: the window's observations are gone");
 

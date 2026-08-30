@@ -119,11 +119,21 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         bool attributed; // beneficiary is authenticated: reputation may be read/written
         bool finalized;  // verdict locked in while the window's data still existed
         int24 fMarkout;  // snapshotted markout  (valid iff finalized)
-        int24 fTheta;    // snapshotted theta    (valid iff finalized)
+        int24 fTheta;    // theta, fixed at execution
+        // The rest of the verdict tuple, also fixed at execution. v7 froze only theta, which
+        // closed one of the four inputs to a verdict and left three mutable: `setParams` is
+        // read at SETTLE time, so the owner could still relocate the measurement WINDOW or
+        // tighten the forfeit RAMP under an already-escrowed bond. Round-3 findings B and C.
+        uint16 fMaturity;
+        uint16 fWindow;
+        int24 fRamp;
     }
 
     uint256 public nextSwapId;
-    mapping(uint256 => SwapRecord) public swaps;
+    /// @dev `internal`, not `public`: with the full verdict tuple the auto-generated getter
+    ///      returns 16 values and overflows solc's stack. `getSwap` returns the struct as
+    ///      memory instead, which is also ~1kB cheaper.
+    mapping(uint256 => SwapRecord) internal swaps;
 
     // Reputation (per-address EMA of toxic markout). WAD-scaled ticks.
     mapping(address => uint256) public toxicityScore;
@@ -306,26 +316,44 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         // this is an in-place refresh.
         observations[id].writeOrUpdate(stamp, execTick);
 
-        // Theta is fixed here, once, from data that already existed when the swap landed.
-        // Nothing that happens afterwards can move it.
-        int24 theta = int24(_theta(id, p, stamp));
+        _storeSwap(id, p, trader, zeroForOne, attributed, isCurrency0, absUnspec, bond, execTick, stamp);
+    }
 
+    /// @dev Split out of `_recordSwap` purely for stack room: the full verdict tuple plus the
+    ///      event's eight arguments overflow solc's stack without via_ir.
+    ///
+    ///      Everything a swap will ever be judged by is fixed HERE, at execution: theta from
+    ///      observations that already existed when the trade landed, and the measurement
+    ///      window and forfeit ramp so that no later `setParams` can move the terms under an
+    ///      escrowed bond. v7 froze only theta, which left three of the four inputs to a
+    ///      verdict mutable (round-3 findings B and C).
+    function _storeSwap(
+        PoolId id,
+        HindsightParams memory p,
+        address trader,
+        bool zeroForOne,
+        bool attributed,
+        bool isCurrency0,
+        uint256 absUnspec,
+        uint256 bond,
+        int24 execTick,
+        uint48 stamp
+    ) internal {
         uint256 swapId = nextSwapId++;
-        swaps[swapId] = SwapRecord({
-            trader: trader,
-            execStamp: stamp,
-            zeroForOne: zeroForOne,
-            status: 0,
-            poolId: id,
-            notional: uint128(absUnspec),
-            bond: uint128(bond),
-            bondIsCurrency0: isCurrency0,
-            execTick: execTick,
-            attributed: attributed,
-            finalized: false,
-            fMarkout: 0,
-            fTheta: theta
-        });
+        SwapRecord storage rec = swaps[swapId];
+        rec.trader = trader;
+        rec.execStamp = stamp;
+        rec.zeroForOne = zeroForOne;
+        rec.poolId = id;
+        rec.notional = uint128(absUnspec);
+        rec.bond = uint128(bond);
+        rec.bondIsCurrency0 = isCurrency0;
+        rec.execTick = execTick;
+        rec.attributed = attributed;
+        rec.fTheta = int24(_theta(id, p, stamp));
+        rec.fMaturity = p.maturityStamps;
+        rec.fWindow = p.twapWindowStamps;
+        rec.fRamp = p.rampTicks;
         emit SwapRecorded(swapId, id, trader, zeroForOne, uint128(absUnspec), uint128(bond), stamp, execTick);
     }
 
@@ -421,22 +449,21 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     }
 
     function _matured(SwapRecord storage r) internal view returns (bool) {
-        HindsightParams storage p = poolParams[r.poolId];
-        return currentStamp() >= r.execStamp + p.maturityStamps + p.twapWindowStamps;
+        return currentStamp() >= r.execStamp + r.fMaturity + r.fWindow;
     }
 
     function _doSettle(uint256 swapId, SwapRecord storage r, address keeper) internal {
         HindsightParams memory p = poolParams[r.poolId];
         uint48 nowStamp = currentStamp();
-        uint48 windowStart = r.execStamp + p.maturityStamps;
-        uint48 windowEnd = windowStart + p.twapWindowStamps;
+        uint48 windowStart = r.execStamp + r.fMaturity;
+        uint48 windowEnd = windowStart + r.fWindow;
 
         SettleData memory sd;
         {
             (bool toxic, uint256 fWad, int256 markoutTicks, int256 thetaTicks, bool graded) =
                 _verdict(r, p, nowStamp, windowStart, windowEnd);
             if (r.attributed) {
-                _updateReputation(r.trader, markoutTicks, thetaTicks, toxic, graded, p.rampTicks);
+                _updateReputation(r, markoutTicks, thetaTicks, toxic, graded);
             }
             sd = SettleData(swapId, toxic, fWad, keeper, markoutTicks, thetaTicks, graded);
         }
@@ -470,7 +497,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         if (r.finalized) {
             markoutTicks = r.fMarkout;
             thetaTicks = r.fTheta;
-            fWad = MarkoutLib.forfeitWad(markoutTicks, thetaTicks, int256(p.rampTicks));
+            fWad = MarkoutLib.forfeitWad(markoutTicks, thetaTicks, int256(r.fRamp));
             return (fWad > 0, fWad, markoutTicks, thetaTicks, true);
         }
         if (nowStamp > windowEnd + p.graceStamps) {
@@ -488,7 +515,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         }
         markoutTicks = MarkoutLib.markout(r.execTick, twapTick, r.zeroForOne);
         thetaTicks = r.fTheta;   // fixed at execution; see _theta
-        fWad = MarkoutLib.forfeitWad(markoutTicks, thetaTicks, int256(p.rampTicks));
+        fWad = MarkoutLib.forfeitWad(markoutTicks, thetaTicks, int256(r.fRamp));
         toxic = fWad > 0;
         graded = true;
     }
@@ -643,8 +670,8 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         if (r.trader == address(0)) revert UnknownSwap();
         if (r.finalized || r.status != 0) return;
         HindsightParams memory p = poolParams[r.poolId];
-        uint48 windowStart = r.execStamp + p.maturityStamps;
-        uint48 windowEnd = windowStart + p.twapWindowStamps;
+        uint48 windowStart = r.execStamp + r.fMaturity;
+        uint48 windowEnd = windowStart + r.fWindow;
         if (currentStamp() < windowEnd) revert NotMatured();
 
         (int24 twapTick,, bool ok) = observations[r.poolId].twap(windowStart, windowEnd, p.maxJumpTicks);
@@ -709,14 +736,17 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     ///      for grace would also be the path that erases the trader's record. An ungraded
     ///      REFUND (missing data) stays perfectly neutral, preserving the rule that
     ///      withholding observations can never punish a trader.
+    /// @dev Takes the record rather than `(trader, rampTicks)` separately: reading two packed
+    ///      storage fields at the call site pushed `_doSettle` past solc's stack limit.
     function _updateReputation(
-        address trader,
+        SwapRecord storage r,
         int256 markoutTicks,
         int256 thetaTicks,
         bool toxic,
-        bool graded,
-        int24 rampTicks
+        bool graded
     ) internal {
+        address trader = r.trader;
+        int24 rampTicks = r.fRamp;
         uint256 raw = 0;
         if (toxic) {
             raw = (graded && markoutTicks > thetaTicks)
@@ -778,8 +808,8 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     function _defaultParams() internal pure returns (HindsightParams memory) {
         return HindsightParams({
             bondBps: 25,            // 0.25% of the unspecified amount
-            maturityStamps: 15,     // N ≈ 3.0s on Unichain
-            twapWindowStamps: 10,   // W ≈ 2.0s
+            maturityStamps: 50,     // N ≈ 3.0s on Unichain
+            twapWindowStamps: 25,   // W ≈ 2.0s
             graceStamps: 3000,      // ≈ 10 min before auto-forfeit
             thetaMinTicks: 3,       // θ floor ≈ 3 bps
             thetaVolMultX10: 14,    // k = 1.4 × trailing realized vol (recalibrated
@@ -808,6 +838,12 @@ contract HindsightHook is BaseHook, IUnlockCallback {
                 // theta_min is the floor of the toxicity threshold; unbounded above, the owner
                 // could set it past every possible markout and switch the mechanism off.
                 || p.thetaMinTicks > 1000
+                // rampTicks < 1 was a no-op bound: MarkoutLib returns a FULL forfeit for any
+                // excess >= rampTicks, so ramp=1 and ramp=0 are identical. Round-3 C.
+                || p.rampTicks < 2
+                // thetaVolMultX10 was unbounded, so the owner could set theta past any
+                // reachable markout and switch the mechanism off from the other direction.
+                || p.thetaVolMultX10 > 200
                 // Params are read at SETTLE time, so shortening the settlement deadline would
                 // retroactively push already-escrowed bonds past grace and auto-forfeit them
                 // at 100%, bypassing theta and the ramp entirely. The deadline may only ever
@@ -857,13 +893,13 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     {
         SwapRecord storage r = swaps[swapId];
         HindsightParams memory p = poolParams[r.poolId];
-        uint48 windowStart = r.execStamp + p.maturityStamps;
-        uint48 windowEnd = windowStart + p.twapWindowStamps;
+        uint48 windowStart = r.execStamp + r.fMaturity;
+        uint48 windowEnd = windowStart + r.fWindow;
         matured = currentStamp() >= windowEnd;
         if (r.finalized) {
             markoutTicks = r.fMarkout;
             thetaTicks = r.fTheta;
-            forfeitWad_ = MarkoutLib.forfeitWad(markoutTicks, thetaTicks, int256(p.rampTicks));
+            forfeitWad_ = MarkoutLib.forfeitWad(markoutTicks, thetaTicks, int256(r.fRamp));
             return (matured, true, markoutTicks, thetaTicks, forfeitWad_);
         }
         (int24 twapTick,, bool ok) = observations[r.poolId].twap(windowStart, windowEnd, p.maxJumpTicks);
@@ -871,7 +907,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         if (ok) {
             markoutTicks = MarkoutLib.markout(r.execTick, twapTick, r.zeroForOne);
             thetaTicks = r.fTheta;   // fixed at execution; see _theta
-            forfeitWad_ = MarkoutLib.forfeitWad(markoutTicks, thetaTicks, int256(p.rampTicks));
+            forfeitWad_ = MarkoutLib.forfeitWad(markoutTicks, thetaTicks, int256(r.fRamp));
         }
     }
 

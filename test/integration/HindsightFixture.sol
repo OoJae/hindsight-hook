@@ -26,7 +26,7 @@ contract HindsightFixture is Test, Deployers {
 
     uint48 constant T0 = 1000;
     uint24 constant BOND_BPS = 25;
-    // default params: N=15, W=10, grace=3000, epoch=50
+    // live params: N=50, W=25, grace=3000, epoch=50
 
     function setUp() public virtual {
         deployFreshManagerAndRouters();
@@ -61,8 +61,8 @@ contract HindsightFixture is Test, Deployers {
             poolId,
             HindsightHook.HindsightParams({
                 bondBps: 25,
-                maturityStamps: 15,
-                twapWindowStamps: 10,
+                maturityStamps: 50,
+                twapWindowStamps: 25,
                 graceStamps: 3000,
                 thetaMinTicks: 3,
                 thetaVolMultX10: 14,
@@ -136,6 +136,6 @@ contract HindsightFixture is Test, Deployers {
 
     function pastWindow(uint256 swapId) internal view returns (uint48) {
         HindsightHook.SwapRecord memory r = hook.getSwap(swapId);
-        return r.execStamp + 15 + 10 + 1; // N + W + 1
+        return r.execStamp + r.fMaturity + r.fWindow + 1; // read the frozen window
     }
 }

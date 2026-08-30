@@ -15,7 +15,7 @@ contract AuditRepro3Test is HindsightFixture {
     /// live at settle time (HindsightHook.sol:473) while theta is now snapshotted at
     /// execution, and setParams only requires `rampTicks >= 1`. So after a bond is escrowed
     /// the owner can set ramp = 1 and convert a proportional forfeit into a total one.
-    function test_R1_owner_can_still_maximise_forfeits_on_in_flight_bonds() public {
+    function test_R1_owner_cannot_maximise_forfeits_on_in_flight_bonds() public {
         // A trade that reads MILDLY toxic: markout a few ticks past theta but inside the
         // ramp, so the shipped parameters give a PARTIAL forfeit. That is the case the ramp
         // exists for, and the case the owner can retroactively convert into a total loss.
@@ -27,12 +27,19 @@ contract AuditRepro3Test is HindsightFixture {
         assertGt(fWadBefore, 0, "precondition: reads toxic");
         assertLt(fWadBefore, 1e18, "precondition: only a PARTIAL forfeit at the shipped ramp");
 
+        // ramp=1 was the exploit: MarkoutLib returns a FULL forfeit for any excess >= ramp,
+        // so ramp=1 and the forbidden ramp=0 are identical. The bound is now `>= 2`.
         HindsightHook.HindsightParams memory p = _liveParams();
-        p.rampTicks = 1; // the tightest ramp the bounds allow
+        p.rampTicks = 1;
+        vm.expectRevert(HindsightHook.BadParams.selector);
         hook.setParams(poolId, p);
 
+        // And even a legal tightening cannot reach an escrowed bond: the ramp is frozen in
+        // the record at execution.
+        p.rampTicks = 2;
+        hook.setParams(poolId, p);
         (,,, , uint256 fWadAfter) = hook.previewSettle(0);
-        assertEq(fWadAfter, 1e18, "EXPLOIT: ramp=1 turns a partial forfeit into a total one");
+        assertEq(fWadAfter, fWadBefore, "a retune must not touch an in-flight forfeit");
     }
 
     // ── R2: permissionless poke() deflates theta for everyone ───────────────────────
@@ -74,7 +81,7 @@ contract AuditRepro3Test is HindsightFixture {
     //     POSITION. maturityStamps is read live at settle time, so the owner can slide an
     //     in-flight swap's measurement window with hindsight, at zero ratchet cost.
 
-    function test_R3_owner_can_relocate_an_in_flight_measurement_window() public {
+    function test_R3_relocating_the_window_no_longer_reaches_in_flight_swaps() public {
         swapAs(USER, true, -25e18);
         HindsightHook.SwapRecord memory r = hook.getSwap(0);
 
@@ -96,14 +103,18 @@ contract AuditRepro3Test is HindsightFixture {
             "the deadline sum is untouched, which is all M6 checks");
         hook.setParams(poolId, p);   // must NOT revert -- that is the finding
 
+        // setParams still ACCEPTS this (the sum is unchanged, which is all the ratchet
+        // constrains) -- but it no longer reaches swaps already in flight, because the whole
+        // verdict tuple is frozen in the record.
         (,,, int256 thetaAfter,) = hook.previewSettle(0);
-        assertEq(thetaAfter, int256(r.fTheta), "theta is frozen (v7) -- only the WINDOW moved");
+        assertEq(thetaAfter, int256(r.fTheta), "theta frozen");
+        assertEq(uint256(hook.getSwap(0).fMaturity), 50, "maturity frozen at execution");
+        assertEq(uint256(hook.getSwap(0).fWindow), 25, "window frozen at execution");
     }
 
-    /// The consequence, demonstrated: the markout a swap is judged on CHANGES when the owner
-    /// moves the window afterwards. This asserts the exploit, not the fix — invert it to
-    /// `assertEq` once the window is snapshotted into SwapRecord alongside fTheta.
-    function test_R3_markout_a_swap_is_judged_on_changes_after_the_fact() public {
+    /// The consequence: the markout a swap is judged on must NOT change when the owner moves
+    /// the window afterwards. Before the fix this asserted the opposite and passed.
+    function test_R3_markout_a_swap_is_judged_on_is_fixed_at_execution() public {
         swapAs(USER, true, -25e18);
         driftPrice(true, 20, -30e18);
         advanceTo(pastWindow(0));
@@ -111,20 +122,20 @@ contract AuditRepro3Test is HindsightFixture {
 
         HindsightHook.HindsightParams memory p = _liveParams();
         p.maturityStamps = 200;
-        p.graceStamps = uint16(uint256(3065) - p.maturityStamps - p.twapWindowStamps);
+        p.graceStamps = uint16(uint256(3075) - p.maturityStamps - p.twapWindowStamps);
         hook.setParams(poolId, p);
         advanceTo(stampNow() + 400);
 
         (,, int256 markoutAfter,,) = hook.previewSettle(0);
-        assertTrue(markoutAfter != markoutBefore,
-            "EXPLOIT: the markout depends on params set AFTER the swap landed");
+        assertEq(markoutAfter, markoutBefore,
+            "the markout must not depend on params set after the swap landed");
     }
 
     function _liveParams() internal pure returns (HindsightHook.HindsightParams memory) {
         return HindsightHook.HindsightParams({
             bondBps: 25,
-            maturityStamps: 15,
-            twapWindowStamps: 10,
+            maturityStamps: 50,
+            twapWindowStamps: 25,
             graceStamps: 3000,
             thetaMinTicks: 3,
             thetaVolMultX10: 14,

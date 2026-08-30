@@ -155,7 +155,7 @@ contract DeltaSignsSpike is Test, Deployers {
         assertGt(uint256(bond), 0);
 
         // No further price movement ⇒ benign ⇒ refund.
-        fb.set(1000 + 15 + 10 + 1); // past exec + N + W
+        fb.set(1000 + 50 + 25 + 1); // past exec + N + W
         uint256 meBefore = IERC20Minimal(Currency.unwrap(currency1)).balanceOf(address(this));
         hook.settle(0);
         uint256 meAfter = IERC20Minimal(Currency.unwrap(currency1)).balanceOf(address(this));
@@ -166,12 +166,13 @@ contract DeltaSignsSpike is Test, Deployers {
     function test_settle_forfeit_smoke() public {
         _swap(true, -1e18);
 
-        // Keep pushing the price the same direction during the window ⇒ toxic markout.
-        for (uint256 i = 1; i <= 25; i++) {
+        // Keep pushing the price the same direction through the window ⇒ toxic markout.
+        // Window is [exec+50, exec+75] at the live parameters.
+        for (uint256 i = 50; i <= 74; i++) {
             fb.set(1000 + i);
-            _swap(true, -30e18);
+            _swap(true, -10e18);
         }
-        fb.set(1000 + 26);
+        fb.set(1000 + 76);
 
         uint128 bond = hook.getSwap(0).bond;
         uint256 hookTokBefore = IERC20Minimal(Currency.unwrap(currency1)).balanceOf(address(hook));

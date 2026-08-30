@@ -93,14 +93,14 @@ contract AuditRepro2Test is HindsightFixture {
 
         // The exact vector that reached theta=171 on the pre-fix build: round trips landing
         // INSIDE the settlement window [exec+15, exec+25].
-        advanceTo(r.execStamp + 15);
+        advanceTo(r.execStamp + 50);
         for (uint256 i = 0; i < 5; i++) {
             fb.increment();
             swapAs(address(0xADD1), true, -30e18);
             fb.increment();
             swapAs(address(0xADD1), false, -30e18);
         }
-        advanceTo(r.execStamp + 26);
+        advanceTo(r.execStamp + 76);
 
         (,, int256 markout, int256 thetaAfter,) = hook.previewSettle(0);
         assertGt(markout, 0, "precondition: the padding did move the price");
@@ -176,8 +176,8 @@ contract AuditRepro2Test is HindsightFixture {
             poolId,
             HindsightHook.HindsightParams({
                 bondBps: 25,
-                maturityStamps: 15,
-                twapWindowStamps: 10,
+                maturityStamps: 50,
+                twapWindowStamps: 25,
                 graceStamps: 3000,
                 thetaMinTicks: type(int24).max,
                 thetaVolMultX10: 14,
@@ -208,7 +208,7 @@ contract AuditRepro2Test is HindsightFixture {
         assertTrue(hook.getSwap(0).finalized, "verdict locked while the data existed");
 
         // ...then nobody settles for far longer than the grace period.
-        advanceTo(r.execStamp + 15 + 10 + 3000 + 500);
+        advanceTo(r.execStamp + 50 + 25 + 3000 + 500);
         hook.settle(0);
 
         assertEq(uint256(hook.getSwap(0).status), 1, "recorded benign must settle as a refund");
@@ -233,7 +233,7 @@ contract AuditRepro2Test is HindsightFixture {
         HindsightHook.SwapRecord memory r = hook.getSwap(0);
         uint256 userAfterSwap = bal0(USER) + bal1(USER);
 
-        advanceTo(r.execStamp + 15 + 10 + 3000 + 500); // long past grace, never finalized
+        advanceTo(r.execStamp + 50 + 25 + 3000 + 500); // long past grace, never finalized
         hook.settle(0);
 
         assertEq(uint256(hook.getSwap(0).status), 1, "intact data grades benign, not forfeit");
@@ -259,7 +259,7 @@ contract AuditRepro2Test is HindsightFixture {
 
         // Now let swap 1 lapse: past exec + maturity + window + grace.
         HindsightHook.SwapRecord memory r1 = hook.getSwap(1);
-        advanceTo(r1.execStamp + 15 + 10 + 3000 + 1);
+        advanceTo(r1.execStamp + 50 + 25 + 3000 + 1);
         uint256 keeperBefore2 = bal1(KEEPER);
         vm.prank(KEEPER);
         hook.settle(1);
