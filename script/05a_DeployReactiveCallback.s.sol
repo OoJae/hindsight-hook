@@ -16,7 +16,7 @@ contract DeployReactiveCallback is Script {
         bytes32 poolId = vm.envBytes32("POOL_ID");
 
         vm.startBroadcast(pk);
-        HindsightCallback cb = new HindsightCallback{value: 0.02 ether}(
+        HindsightCallback cb = new HindsightCallback{value: 0.004 ether}(
             proxy, HindsightHook(payable(vm.envAddress("HOOK"))), PoolId.wrap(poolId)
         );
         vm.stopBroadcast();

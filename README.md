@@ -6,7 +6,8 @@
 
 Built for the **UHI10 Hookathon** (theme: *Sustainable Liquidity & MEV Protection*).
 
-**🔗 Live app (Unichain Sepolia): https://oojae.github.io/hindsight-hook/** — watch the real
+**🔗 Live app (Unichain Sepolia): https://oojae.github.io/hindsight-hook/**
+**Hook:** `0xeb77d98A9dfB72Fb17d196a3ec08F985bF0510c4` · all addresses in [`DEPLOYMENTS.md`](DEPLOYMENTS.md) — watch the real
 flashblock counter tick, get a bond quote, and see live settlements incl. an actual toxic
 forfeit. Connect any wallet on Unichain Sepolia to swap ("Mint demo tokens" gives you balance).
 
@@ -66,7 +67,7 @@ The newest generation of defenses (priority-fee MEV taxes à la Angstrom L2 / Ba
 |---|---|
 | swaps replayed | **55,822** ($13.4M volume) |
 | LP fee income (status quo) | $6,691 |
-| **Hindsight clawback on top** | **+$1,071 (+16.0% LP revenue)** |
+| **Hindsight clawback on top** | **+$1,071 gross (+16.0%)** — net of the 5% keeper tip, **+$1,018 to LPs (+15.2%)** |
 | toxic flow identified | 9.9% of swaps, 12.9% of volume |
 | benign effective fee | **exactly 5.00 bps** (bond fully refunded) |
 | toxic effective fee | 11.2 bps (fee + forfeited bond) |
@@ -79,9 +80,9 @@ Plus the worked example from the mechanism design: a benign trader pays **$50 pe
 
 - **Unichain** — the mechanism is flashblock-native: settlement windows are measured on **Uniswap's official FlashblockNumber contract** (live builder-maintained proxies: mainnet [`0x3c3a…1ec3→proxy 0x3c3a8a41e095c76b03f79f70955fff3b03cf753e`], Sepolia [`0x056466f1a50a6B5e4DCCF106074ee0083D721a42`] — verified ticking at 200ms cadence). To our knowledge this is the **first v4 hook to consume it**. Graceful `block.number` fallback + owner emergency switch if builder infra ever halts; `src/OperatedFlashblockNumber.sol` mirrors the official V1 allowlist pattern as a contingency. Fork tests run the full cycle against the **real Unichain Sepolia PoolManager**.
 
-- **Reactive Network** — **live and verified end-to-end**: an RSC on Reactive Lasna (`src/integrations/reactive/HindsightReactive.sol`, deployed `0x20dF56E0c2271A0D1e835A69A872139849e96F08`) subscribes to the hook's `SwapRecorded` events on Unichain Sepolia plus Cron sweep/flush topics, and drives settlement through the official callback proxy into `HindsightCallback` (`0xC971B9073E118DF50FAE99FeFa7EeEaEEe32C1fC`). Proof: swap settled autonomously in 29s by the Reactive relayer — tx `0xacc2cf71beba00a94862f41aafe62d185fb93d30eabcc4d1c68db029d86b11c4`. Settlement liveness without any operated infrastructure.
+- **Reactive Network** — **live and verified end-to-end.** An RSC on Reactive Lasna (`src/integrations/reactive/HindsightReactive.sol`, deployed `0x54893ee6300BE90eF771fd17437600b6b1421e7C`) subscribes to the hook's `SwapRecorded` events on Unichain Sepolia plus Cron sweep/flush topics, and drives settlement through the official callback proxy into `HindsightCallback` (`0x0caa8dE2A2aE4565987C0203B81aaB47D1cc70E6`). The current v3 deployment settles autonomously in ~24s; the first such settlement we captured a tx hash for was on the v1 bytecode: `0xacc2cf71beba00a94862f41aafe62d185fb93d30eabcc4d1c68db029d86b11c4` (29s). Settlement liveness without any operated infrastructure.
 
-- **Chainlink Automation** — `src/integrations/chainlink/HindsightUpkeep.sol` deployed on Base Sepolia (`0x163C7077F4480EB3315479bdf5831051DD91160a`) against a second, chain-identical hook deployment (`0x9C5e288E599EC90be441a5cCaFF73603F69E10C4`, running the hook's `block.number` fallback clock): three-mode conditional upkeep (settle/flush/poke), forwarder-gated, **three upkeeps registered programmatically against the live v2.3 registrar** (the web UI is deprecated to withdraw-only; we encoded the v2.3 `RegistrationParams` incl. `billingToken` by hand), auto-approved, LINK-funded, forwarders wired on-chain. Full transparency: Chainlink sunset classic-Automation testnet execution in mid-2026 and the Base Sepolia DON currently performs nothing for anyone (30h registry scan: zero `UpkeepPerformed` events) — so the perform path is proven by the fork suite executing the complete check→perform→refund cycle against the real Base Sepolia PoolManager. Registration txs + upkeep IDs in `DEPLOYMENTS.md`.
+- **Chainlink Automation** — `src/integrations/chainlink/HindsightUpkeep.sol` deployed on Base Sepolia (`0x128dfBf63d16f0969f9c39587D0D4080B76A0488`) against a second, chain-identical hook deployment (`0xE8eD0B1f0c14A09F84fC912C2cce90e77DEbd0C4`, running the hook's `block.number` fallback clock): three-mode conditional upkeep (settle/flush/poke), forwarder-gated, **three upkeeps registered programmatically against the live v2.3 registrar** (the web UI is deprecated to withdraw-only; we encoded the v2.3 `RegistrationParams` incl. `billingToken` by hand), auto-approved, LINK-funded, forwarders wired on-chain. Full transparency: Chainlink sunset classic-Automation testnet execution in mid-2026 and the Base Sepolia DON currently performs nothing for anyone (30h registry scan: zero `UpkeepPerformed` events) — so the perform path is proven by the fork suite executing the complete check→perform→refund cycle against the real Base Sepolia PoolManager (reproduce: `BASE_SEPOLIA_RPC_URL=<rpc> forge test --mc BaseSepoliaFork -vv`, ~13s; without an RPC the fork tests SKIP loudly rather than passing silently).
 
 See `DEPLOYMENTS.md` for all addresses and proof transactions.
 
@@ -118,7 +119,8 @@ git clone https://github.com/OoJae/hindsight-hook && cd hindsight-hook
 git submodule update --init lib/reactive-lib lib/v4-hooks-public
 git -C lib/v4-hooks-public submodule update --init --recursive lib/v4-core lib/v4-periphery
 git -C lib/v4-hooks-public submodule update --init lib/openzeppelin-contracts lib/solady lib/forge-std
-forge test                                   # 87 tests: unit, integration, invariant, fork
+forge test                                   # 98 tests: unit, integration, invariant
+forge test --match-path 'test/fork/*'        # +5 fork tests (needs an RPC; SKIPs loudly without one)
 forge test --mc UnichainSepoliaFork -vv      # fork suite vs real Unichain Sepolia state
 forge test --gas-report
 
@@ -142,6 +144,26 @@ cd bot && npm i && npm start                 # keeper: poke/settle/flush
 - TWAP: time-weighted with per-observation jump clamping; bond capped at the linearized cost of moving the pool by the toxicity threshold (`bond ≤ κ·L_active·θ`) so manipulation is never +EV — thin pools degrade toward a plain low-fee pool; range-exiting fills pay the standard bond (max realized price move = max markout exposure)
 - Rounding: forfeits round down, refunds get the remainder (trader-favoring on dust)
 - Invariant-tested: escrowed claims ≡ pending bonds; hook custody ≡ donation pot
+- **Attribution is authenticated.** `hookData` is attacker-controlled, so it can direct a
+  refund (the payer's own money) but can never move someone else's reputation: reputation is
+  read/written only for self-attributed flow (`beneficiary == tx.origin`) or flow vouched by
+  a whitelisted router via `IMsgSender`. Unauthenticated flow pays the full default bond and
+  is reputation-neutral. (`tx.origin` is used purely as "did this address participate", never
+  as an authorization grant; AA wallets use the trusted-router path.)
+- **Owner powers are bounded.** `setParams` is read at settle time, so it is retroactive over
+  in-flight bonds — the bounds are what make that safe: keeper tip ≤ 10%, `grace ≥ window`,
+  `theta/ramp ≥ 1`, bond ≤ 100bps. The owner can never construct a universal forfeit or route
+  a bond to itself. Ownership is 2-step transferable, and is an explicit constructor argument
+  (hooks are deployed via the CREATE2 factory, so `msg.sender` would be the factory).
+- **Batch settlement is fault-isolated**: each id settles behind an external self-call with a
+  gas stipend, so one hostile beneficiary cannot stall the Chainlink/Reactive lanes.
+
+### Audit
+A multi-agent adversarial audit (4 attack lanes + independent verification of every finding)
+was run against this codebase; the resulting fixes are the v3 deployment. Two of the
+headline claims did not reproduce under our own repro tests and were dropped rather than
+"fixed" — the surviving issues, their exploits, and their regression tests live in
+`test/integration/AuditRepro.t.sol`.
 
 ## Future work
 

@@ -29,7 +29,7 @@ export const hookAbi = [
         { name: "zeroForOne", type: "bool" }, { name: "status", type: "uint8" },
         { name: "poolId", type: "bytes32" }, { name: "notional", type: "uint128" },
         { name: "bond", type: "uint128" }, { name: "bondIsCurrency0", type: "bool" },
-        { name: "execTick", type: "int24" },
+        { name: "execTick", type: "int24" }, { name: "attributed", type: "bool" },
       ],
     }],
   },

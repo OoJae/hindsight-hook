@@ -4,62 +4,72 @@
 
 Deployer (all chains): `0x5d4E95E57cf3369E31E6a50D7C4fECB04177226f`
 
-## Current deployment: v2 (Aug 29 late — includes the manipulation-cost bond cap)
+## Current deployment: v3 (post-adversarial-audit — this is what to review)
+
+v3 fixes the audit's critical + high findings: the post-swap tick now enters the
+observation series (the classifier was previously scoring trades against their own
+pre-trade price), reputation is only written for authenticated attribution, auto-forfeits
+no longer launder reputation, `setParams` is bounded with 2-step ownership, `settleBatch`
+is fault-isolated, and the hook takes an explicit owner (CREATE2 made `msg.sender` the
+factory).
 
 ### Unichain Sepolia (1301) — primary, flashblock-native
 | Contract | Address |
 |---|---|
-| **HindsightHook v2** | `0x9b7835C368fc2E39f1225DaC36daA5c7560710c4` |
-| dETH (token0) | `0x43cfD0b48d741Bd6F947fBc86a42E0cDa625fE58` |
-| dUSDC (token1) | `0x8Fb42abC96DcF78C86585Cff4823937140f09bCB` |
-| PoolSwapTest router | `0x13502fa74BB545E9d279215802Be88959f2D6e3d` |
-| PoolModifyLiquidityTest | `0x2E4a670152A5a4430FFD1B78C0B1e949Cf776554` |
-| Pool (5bps, ts=10) | poolId `0xb9ea48e9c48411175d620a0df86efba05623279b4f46850323f9f04b734bdfc8` |
-| HindsightCallback v2 (Reactive dest) | `0x81a7BDF402917Ea65F44e3489b10D8562AFB0861` |
+| **HindsightHook v3** | `0xeb77d98A9dfB72Fb17d196a3ec08F985bF0510c4` |
+| dETH (token0) | `0x011ca1BBc0Eae03AA9Ef4Fbf4e64923dAD3FB588` |
+| dUSDC (token1) | `0xd2b9c04a30E83ECf55FB5F4485F9910e74a9f082` |
+| PoolSwapTest router | `0x2B1CcA9D8AAf82Ec4cF8E3A23cA5Ca323741E8eD` |
+| PoolModifyLiquidityTest | `0xFff4EaAFBe82801B8A8eA11BE27184439a57B67E` |
+| Pool (5bps, ts=10) | poolId `0xcb25338a48454517a0bab70a8f1929ab043294f3aa57f34ff1f6dd9950194015` |
+| HindsightCallback v3 (Reactive dest) | `0x0caa8dE2A2aE4565987C0203B81aaB47D1cc70E6` |
 | Clock: official FlashblockNumber | `0x056466f1a50a6B5e4DCCF106074ee0083D721a42` (live, 200ms) |
 | Reactive callback proxy | `0x9299472A6399Fd1027ebF067571Eb3e3D7837FC4` |
+| Owner (admin, 2-step transferable) | `0x5d4E95E57cf3369E31E6a50D7C4fECB04177226f` |
 
-**Live v2 proofs:**
-- swap #0 (benign) settled **autonomously by the Reactive Network in 24 seconds** — zero manual action
-- arb burst (#1–#8): the mechanism discriminated live — **#6 flagged toxic** (markout 10 vs θ=3) and
-  forfeited to the LP pot; the other 7 refunded in full; forfeits already **dripping to LPs** via the
-  autonomous cron flush + keeper bot
-- on-chain reputation moved: the arb address's next bond costs 25.3bps (penalty multiplier live)
+**Live v3 proofs**
+- benign swap #0 settled **autonomously by the Reactive Network in ~24 seconds**, no manual action
+- 8-swap arb burst: **#5 and #7 flagged toxic and forfeited**, the rest refunded in full —
+  the hardened classifier caught **2×** what the pre-audit build caught on the identical
+  script, and recaptured ~7× more value (0.031 vs 0.0045 dUSDC into the LP pot)
+- `sizeTierCap` configured on-chain (10e18), so the earned discount is actually enabled and
+  the whale guard is real rather than nominal
 
 ### Reactive Lasna (5318007)
 | Contract | Address |
 |---|---|
-| **HindsightReactive v2 (RSC)** | `0xB08c1A18905E6A8648B436BeaA112559938b1979` |
-| Subscriptions | SwapRecorded@1301 (hook v2) + Cron10 + Cron100 — confirmed via system-contract events |
+| **HindsightReactive v3 (RSC)** | `0x54893ee6300BE90eF771fd17437600b6b1421e7C` |
+| Subscriptions | SwapRecorded@1301 (v3 hook) + Cron10 + Cron100 — 3 confirmed via system-contract events |
 | Monitor | https://lasna.reactscan.net/rvm/0x5d4e95e57cf3369e31e6a50d7c4fecb04177226f |
 
 ### Base Sepolia (84532) — Chainlink Automation leg, block-fallback clock
 | Contract | Address |
 |---|---|
-| **HindsightHook v2** | `0xBec754788783e884b6C87708B39D587352C650C4` |
-| dETH / dUSDC | `0x13502fa74BB545E9d279215802Be88959f2D6e3d` / `0x2E4a670152A5a4430FFD1B78C0B1e949Cf776554` |
-| swapRouter | `0xC6aB5bBeBfA1c46A3aA1C64Bf99cB26939126399` |
-| **HindsightUpkeep v2** | `0xEA5Cf0985c1CDA3dea468a3D7295a9717F58CC5a` |
+| **HindsightHook v3** | `0xE8eD0B1f0c14A09F84fC912C2cce90e77DEbd0C4` |
+| dETH / dUSDC | `0x3b7Ad80e5e9f5C11996eA55741AfaD357a1A2388` / `0x78252F0084aD04fab97585bACc288820E497cb5B` |
+| swapRouter | `0x243FF7D87cd61dF93E57F2b807AC189Dfc94b308` |
+| Pool | poolId `0x553260157a2e05383a0f252599b3bb0543e3e111496396592f9d58bc81308c56` |
+| **HindsightUpkeep v3** | `0x128dfBf63d16f0969f9c39587D0D4080B76A0488` |
 | Chainlink registry / registrar (v2.3) | `0x91D4a4C3D448c7f3CB477332B1c7D420a5810aC3` / `0xf28D56F3A707E25B71Ce529a21AF388751E1CF2A` |
 
-**Upkeeps (registered programmatically; UI is withdraw-only post-deprecation):**
+**Upkeeps — registered programmatically** (the Automation UI is deprecated to withdraw-only):
 | mode | upkeepId | forwarder (wired ✓) |
 |---|---|---|
-| 0 settle | `36377096154386998995096217921434037153479878464665922958990593579688370866169` | `0x49937807B027f124ddDb52f4714C76cFd817d76D` |
-| 1 flush | `36030292620762533330296431215473776385185689881553750483498684496058265179077` | `0x725E3604977F4839B37d1390B5eb46eFaD17b595` |
-| 2 poke | `61657934368952509505231538609612036519284418581779687355872807873672370590719` | `0xb9977b933e5e1533f48Ea5E1a2bBf0fFdf42B16A` |
+| 0 settle | `110125075826345663686457826890308126191985981941037011329885424732568684816319` | `0x0831212240355B3b1a3Ac5D4b899EB2f8830DA48` |
+| 1 flush | `47862704171106303588391817869172749781777303657599445986136992085940681684172` | `0x70f4EAB729Cb55b05c4D2a6108ab7700045467DB` |
+| 2 poke | `108327991428983536549553223678789134504030051278533146481908237955380209605182` | `0x225e138459d8b2f92B842aaB511c64da255f3FDe` |
 
-**Status / honesty note:** upkeeps active + funded; our checkUpkeep returns true on-chain. Chainlink
-sunset classic-Automation testnet execution mid-2026 — the Base Sepolia DON performs nothing for
-anyone (30h registry scan: zero UpkeepPerformed events). Perform path proven by the fork suite
-against the real Base Sepolia PoolManager.
+**Honest status:** upkeeps are registered, funded and wired, and `checkUpkeep` returns true
+on-chain — but Chainlink sunset classic-Automation testnet execution in mid-2026 and the
+Base Sepolia DON performs nothing for anyone (30h registry scan: zero `UpkeepPerformed`
+events, registry-wide). The perform path is therefore proven by the fork suite executing
+the full check→perform→refund cycle against the real Base Sepolia PoolManager:
+`BASE_SEPOLIA_RPC_URL=<rpc> forge test --mc BaseSepoliaFork -vv` (~13s). Without an RPC the
+fork tests SKIP loudly — they never report a silent pass.
 
----
+## Archived
+- **v2** (bond-cap bytecode, pre-audit): Unichain hook `0x9b7835C368fc2E39f1225DaC36daA5c7560710c4`, Base hook `0xBec754788783e884b6C87708B39D587352C650C4`, RSC `0xB08c1A18905E6A8648B436BeaA112559938b1979`.
+- **v1** (first live proofs): Unichain hook `0xbea8Ead88aE0E50bfC2F9633d1091875DE2890c4`; first full-cycle settle tx `0x940bf2f10c4e2990f32d835ffa923ea490c6d852bc746e70973df11d9f5deaf2`; **first autonomous Reactive settlement (29s, v1 bytecode)** tx `0xacc2cf71beba00a94862f41aafe62d185fb93d30eabcc4d1c68db029d86b11c4`.
 
-## Archived: v1 deployment (pre-bond-cap bytecode, first live proofs)
-- Unichain Sepolia hook v1 `0xbea8Ead88aE0E50bfC2F9633d1091875DE2890c4`; first full-cycle settle tx
-  `0x940bf2f10c4e2990f32d835ffa923ea490c6d852bc746e70973df11d9f5deaf2`; first AUTONOMOUS Reactive
-  settlement (29s) tx `0xacc2cf71beba00a94862f41aafe62d185fb93d30eabcc4d1c68db029d86b11c4`
-- v1 RSC `0x20dF56E0c2271A0D1e835A69A872139849e96F08` (left to auto-deactivate at zero balance);
-  v1 callback `0xC971B9073E118DF50FAE99FeFa7EeEaEEe32C1fC`; Base v1 hook `0x9C5e288E599EC90be441a5cCaFF73603F69E10C4`,
-  upkeep `0x163C7077F4480EB3315479bdf5831051DD91160a` (v1 upkeep IDs in git history)
+*(v1/v2 hooks were deployed with `owner = msg.sender` through the CREATE2 factory, which
+left their admin functions unreachable — fixed in v3 with an explicit owner argument.)*

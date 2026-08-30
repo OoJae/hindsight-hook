@@ -149,7 +149,12 @@ export default function SwapPage() {
         </div>
         <p className="muted" style={{ marginBottom: 0 }}>
           headline fee: <b>5 bps</b> · refundable bond ≈{" "}
-          <b>{bondQuote !== null ? `${formatUnits(bondQuote, 18)} (25 bps × your reputation)` : "…"}</b>
+          <b>
+            {bondQuote !== null
+              ? `${formatUnits(bondQuote, 18)} ${zeroForOne ? "dUSDC" : "dETH"}`
+              : "…"}
+          </b>{" "}
+          <span className="muted">(25 bps of your output × your reputation)</span>
         </p>
         {log && <p className="warn">{log}</p>}
       </div>
@@ -164,7 +169,7 @@ export default function SwapPage() {
         return (
           <div className="card" key={id.toString()}>
             <div className="row" style={{ justifyContent: "space-between" }}>
-              <span>#{id.toString()} · {r.zeroForOne ? "dETH→dUSDC" : "dUSDC→dETH"} · bond <b>{formatUnits(r.bond, 18)}</b></span>
+              <span>#{id.toString()} · {r.zeroForOne ? "dETH→dUSDC" : "dUSDC→dETH"} · bond <b>{formatUnits(r.bond, 18)} {r.bondIsCurrency0 ? "dETH" : "dUSDC"}</b></span>
               {r.status === 0 && left > 0n && <span className="warn">window open — {left.toString()} flashblocks left</span>}
               {r.status === 0 && left === 0n && (
                 <button onClick={() => doSettle(id)} disabled={busy}>
