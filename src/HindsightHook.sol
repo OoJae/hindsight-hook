@@ -52,6 +52,8 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     error UnknownSwap();
     error CallerNotManager();
     error NotOwner();
+    error BadParams();
+    error CallerNotSelf();
 
     // ─────────────────────────────────── events ────────────────────────────────────
     event SwapRecorded(
@@ -75,6 +77,9 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         uint128 tip
     );
     event DonationFlushed(PoolId indexed poolId, uint128 amount0, uint128 amount1);
+    event TrustedRouterSet(address indexed router, bool trusted);
+    event OwnershipTransferStarted(address indexed from, address indexed to);
+    event OwnershipTransferred(address indexed from, address indexed to);
 
     // ─────────────────────────────────── params ────────────────────────────────────
     struct HindsightParams {
@@ -96,6 +101,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     uint256 public immutable fallbackStampsPerBlock; // scaling for the block.number fallback
     bool public clockFallbackForced;
     address public owner;
+    address public pendingOwner;
 
     mapping(PoolId => PoolKey) public poolKeys;
     mapping(PoolId => HindsightParams) public poolParams;
@@ -111,6 +117,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         uint128 bond;
         bool bondIsCurrency0;
         int24 execTick;
+        bool attributed; // beneficiary is authenticated: reputation may be read/written
     }
 
     uint256 public nextSwapId;
@@ -118,6 +125,10 @@ contract HindsightHook is BaseHook, IUnlockCallback {
 
     // Reputation (per-address EMA of toxic markout). WAD-scaled ticks.
     mapping(address => uint256) public toxicityScore;
+
+    /// @notice Routers that faithfully report their caller via IMsgSender. Only these may
+    ///         attribute a swap to a third party (see `_resolveTrader`).
+    mapping(address => bool) public trustedRouters;
     uint256 public constant EMA_LAMBDA_WAD = 0.9e18;
     uint256 public constant MULT_M0_WAD = 1e18;      // unknown addresses pay full bond (Sybil-proof)
     uint256 public constant MULT_SLOPE_WAD = 0.02e18; // +0.02x per WAD-tick of score
@@ -230,8 +241,8 @@ contract HindsightHook is BaseHook, IUnlockCallback {
             _unspecified(key, params, delta);
         if (absUnspec == 0) return (this.afterSwap.selector, 0);
 
-        uint256 bond =
-            _recordSwap(key, params.zeroForOne, _resolveTrader(sender, hookData), absUnspec, isCurrency0);
+        (address beneficiary, bool attributed) = _resolveTrader(sender, hookData);
+        uint256 bond = _recordSwap(key, params.zeroForOne, beneficiary, attributed, absUnspec, isCurrency0);
         if (bond == 0) return (this.afterSwap.selector, 0);
 
         // Escrow: the positive delta we return credits this hook inside the PoolManager;
@@ -259,15 +270,17 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         PoolKey calldata key,
         bool zeroForOne,
         address trader,
+        bool attributed,
         uint256 absUnspec,
         bool isCurrency0
     ) internal returns (uint256 bond) {
         PoolId id = key.toId();
         HindsightParams memory p = poolParams[id];
+        // Unauthenticated attribution cannot borrow anyone's discount: it pays full freight.
         bond = BondMathLib.bond(
             absUnspec,
             p.bondBps,
-            _bondMultiplier(trader),
+            attributed ? _bondMultiplier(trader, p.sizeTierCap) : MULT_M0_WAD,
             p.sizeTierCap,
             _bondCap(id, isCurrency0, p.thetaMinTicks)
         );
@@ -275,6 +288,11 @@ contract HindsightHook is BaseHook, IUnlockCallback {
 
         (, int24 execTick,,) = poolManager.getSlot0(id);
         uint48 stamp = currentStamp();
+        // The trade's own post-swap price MUST enter the series, otherwise a swap in a quiet
+        // window is scored against its own pre-trade price and markout = -(own impact),
+        // i.e. structurally benign at any size. `beforeSwap` already wrote this stamp, so
+        // this is an in-place refresh.
+        observations[id].writeOrUpdate(stamp, execTick);
 
         uint256 swapId = nextSwapId++;
         swaps[swapId] = SwapRecord({
@@ -286,7 +304,8 @@ contract HindsightHook is BaseHook, IUnlockCallback {
             notional: uint128(absUnspec),
             bond: uint128(bond),
             bondIsCurrency0: isCurrency0,
-            execTick: execTick
+            execTick: execTick,
+            attributed: attributed
         });
         emit SwapRecorded(swapId, id, trader, zeroForOne, uint128(absUnspec), uint128(bond), stamp, execTick);
     }
@@ -314,23 +333,41 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         if (r.trader == address(0)) revert UnknownSwap();
         if (r.status != 0) revert AlreadySettled();
         if (!_matured(r)) revert NotMatured();
-        _doSettle(swapId, r);
+        _doSettle(swapId, r, msg.sender);
     }
 
     /// @notice Non-reverting settle for batch callers (Chainlink performUpkeep, Reactive
     ///         callbacks, keeper bots). Skips instead of reverting so a racing manual
     ///         settle can never brick a batch.
     function trySettle(uint256 swapId) public returns (bool settled) {
+        return _trySettle(swapId, msg.sender);
+    }
+
+    function _trySettle(uint256 swapId, address keeper) internal returns (bool) {
         SwapRecord storage r = swaps[swapId];
         if (r.trader == address(0) || r.status != 0 || !_matured(r)) return false;
-        _doSettle(swapId, r);
+        _doSettle(swapId, r, keeper);
         return true;
     }
 
-    /// @notice Batch settlement — settles whatever is ready, skips the rest.
+    /// @notice External self-call target so `settleBatch` can isolate a failing record.
+    /// @dev `keeper` is passed explicitly because under a self-call `msg.sender` is this
+    ///      contract — tips would otherwise be paid to the hook instead of the caller.
+    function settleOne(uint256 swapId, address keeper) external returns (bool) {
+        if (msg.sender != address(this)) revert CallerNotSelf();
+        return _trySettle(swapId, keeper);
+    }
+
+    /// @notice Batch settlement — settles whatever is ready and SKIPS anything that reverts.
+    /// @dev Each id is settled through an external self-call so one poisoned record (e.g. a
+    ///      beneficiary that rejects its refund, or burns gas in its fallback) can never
+    ///      revert the whole batch and stall the automation lanes. The explicit gas stipend
+    ///      stops a griefing beneficiary from OOG-ing the parent call via the 63/64 rule.
     function settleBatch(uint256[] calldata swapIds) external returns (uint256 nSettled) {
         for (uint256 i; i < swapIds.length; i++) {
-            if (trySettle(swapIds[i])) nSettled++;
+            try this.settleOne{gas: 400_000}(swapIds[i], msg.sender) returns (bool ok) {
+                if (ok) nSettled++;
+            } catch {}
         }
     }
 
@@ -366,19 +403,22 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         return currentStamp() >= r.execStamp + p.maturityStamps + p.twapWindowStamps;
     }
 
-    function _doSettle(uint256 swapId, SwapRecord storage r) internal {
+    function _doSettle(uint256 swapId, SwapRecord storage r, address keeper) internal {
         HindsightParams memory p = poolParams[r.poolId];
         uint48 nowStamp = currentStamp();
         uint48 windowStart = r.execStamp + p.maturityStamps;
         uint48 windowEnd = windowStart + p.twapWindowStamps;
 
-        (bool toxic, uint256 fWad, int256 markoutTicks, int256 thetaTicks) =
-            _verdict(r, p, nowStamp, windowStart, windowEnd);
-
-        _updateReputation(r.trader, markoutTicks, thetaTicks, toxic);
-        poolManager.unlock(
-            abi.encode(CallbackOp.SETTLE, abi.encode(SettleData(swapId, toxic, fWad, msg.sender, markoutTicks, thetaTicks)))
-        );
+        SettleData memory sd;
+        {
+            (bool toxic, uint256 fWad, int256 markoutTicks, int256 thetaTicks, bool graded) =
+                _verdict(r, p, nowStamp, windowStart, windowEnd);
+            if (r.attributed) {
+                _updateReputation(r.trader, markoutTicks, thetaTicks, toxic, graded, p.rampTicks);
+            }
+            sd = SettleData(swapId, toxic, fWad, keeper, markoutTicks, thetaTicks);
+        }
+        poolManager.unlock(abi.encode(CallbackOp.SETTLE, abi.encode(sd)));
     }
 
     /// @notice Push the pending donation pot toward in-range LPs (epoch-gated drip).
@@ -397,17 +437,29 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         uint48 nowStamp,
         uint48 windowStart,
         uint48 windowEnd
-    ) internal view returns (bool toxic, uint256 fWad, int256 markoutTicks, int256 thetaTicks) {
+    ) internal view returns (bool toxic, uint256 fWad, int256 markoutTicks, int256 thetaTicks, bool graded) {
         if (nowStamp > windowEnd + p.graceStamps) {
-            return (true, 1e18, 0, 0);
+            return (true, 1e18, 0, 0, false); // auto-forfeit: punitive, but not a measurement
         }
         (int24 twapTick,, bool ok) = observations[r.poolId].twap(windowStart, windowEnd, p.maxJumpTicks);
-        if (!ok) return (false, 0, 0, 0);
+        if (!ok) return (false, 0, 0, 0, false); // no data: refund, reputation-neutral
         markoutTicks = MarkoutLib.markout(r.execTick, twapTick, r.zeroForOne);
-        (uint256 vol,) = observations[r.poolId].avgAbsJump(windowStart, windowEnd);
-        thetaTicks = int256(uint256(int256(p.thetaMinTicks))) + int256(vol * p.thetaVolMultX10 / 10);
+        thetaTicks = _theta(r.poolId, p, windowStart, windowEnd);
         fWad = MarkoutLib.forfeitWad(markoutTicks, thetaTicks, int256(p.rampTicks));
         toxic = fWad > 0;
+        graded = true;
+    }
+
+    /// @dev Volatility-scaled toxicity threshold. The same jump clamp the TWAP uses is
+    ///      applied to the volatility input, so one spike cannot inflate theta and let the
+    ///      trade that caused it read as benign.
+    function _theta(PoolId id, HindsightParams memory p, uint48 windowStart, uint48 windowEnd)
+        internal
+        view
+        returns (int256)
+    {
+        (uint256 vol,) = observations[id].avgAbsJump(windowStart, windowEnd, p.maxJumpTicks);
+        return int256(uint256(int256(p.thetaMinTicks))) + int256(vol * p.thetaVolMultX10 / 10);
     }
 
     function unlockCallback(bytes calldata data) external returns (bytes memory) {
@@ -526,45 +578,86 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     }
 
     // ────────────────────────────────── reputation ─────────────────────────────────
-    function _bondMultiplier(address trader) internal view returns (uint256 m) {
+    /// @dev The earned discount is only available on pools that explicitly configure a
+    ///      `sizeTierCap` (the whale guard). With the safe default of 0 the discount is off
+    ///      entirely and only penalties apply — so "no reputation laundering" holds by
+    ///      construction rather than by configuration.
+    function _bondMultiplier(address trader, uint128 sizeTierCap) internal view returns (uint256 m) {
         m = ToxicityLib.multiplier(
             toxicityScore[trader], MULT_M0_WAD, MULT_SLOPE_WAD, MULT_MIN_WAD, MULT_MAX_WAD
         );
         // Earned benign-history discount (only applies when no toxicity penalty is active).
-        if (m == MULT_M0_WAD) {
+        if (m == MULT_M0_WAD && sizeTierCap != 0) {
             uint256 discount = uint256(benignSettles[trader]) * DISCOUNT_PER_SETTLE_WAD;
             uint256 floor_ = DISCOUNT_FLOOR_WAD;
             m = discount + floor_ >= MULT_M0_WAD ? floor_ : MULT_M0_WAD - discount;
         }
     }
 
-    function _updateReputation(address trader, int256 markoutTicks, int256 thetaTicks, bool toxic)
-        internal
-    {
+    /// @dev Reputation must never launder a forfeiture. An auto-forfeit at grace is ungraded
+    ///      (no measurement exists) but is still a forfeiture, so it wipes the discount and
+    ///      books a fixed toxicity charge — otherwise a keeper maximising its tip by waiting
+    ///      for grace would also be the path that erases the trader's record. An ungraded
+    ///      REFUND (missing data) stays perfectly neutral, preserving the rule that
+    ///      withholding observations can never punish a trader.
+    function _updateReputation(
+        address trader,
+        int256 markoutTicks,
+        int256 thetaTicks,
+        bool toxic,
+        bool graded,
+        int24 rampTicks
+    ) internal {
         uint256 raw = 0;
-        if (toxic && markoutTicks > thetaTicks) {
-            raw = uint256(markoutTicks - thetaTicks);
-            benignSettles[trader] = 0; // toxicity resets the earned discount
-        } else {
+        if (toxic) {
+            raw = (graded && markoutTicks > thetaTicks)
+                ? uint256(markoutTicks - thetaTicks)
+                : uint256(uint24(rampTicks));
+            benignSettles[trader] = 0; // ANY forfeiture resets the earned discount
+        } else if (graded) {
             unchecked {
                 if (benignSettles[trader] < type(uint32).max) benignSettles[trader]++;
             }
+        } else {
+            return; // ungraded refund: fully neutral
         }
         toxicityScore[trader] = ToxicityLib.update(toxicityScore[trader], raw, EMA_LAMBDA_WAD);
     }
 
-    function _resolveTrader(address sender, bytes calldata hookData) internal view returns (address) {
-        if (hookData.length >= 32) {
-            address t = abi.decode(hookData, (address));
-            if (t != address(0)) return t;
-        }
-        // Routers implementing IMsgSender (v4-core standard) expose the true user.
-        if (sender.code.length > 0) {
+    /// @notice Resolve the bond's beneficiary and whether that attribution is trustworthy.
+    /// @dev `hookData` is attacker-controlled calldata, so it must never be able to write
+    ///      reputation onto a third party (poisoning) or borrow their discount. Refunds may
+    ///      still be directed anywhere — the payer is spending their own money — but
+    ///      reputation is only read/written when `authenticated` is true:
+    ///        * `beneficiary == tx.origin` — self-attribution: the address that actually
+    ///          signed this transaction naming itself. tx.origin is used here purely as
+    ///          "did this address participate", never as an authorization grant; the worst a
+    ///          phisher achieves is attributing a swap to themselves.
+    ///        * a whitelisted router vouching via the v4 `IMsgSender` standard (the path for
+    ///          smart-contract/AA wallets, whose tx.origin is a bundler).
+    ///      Unauthenticated flow simply pays the full default bond and neither earns nor
+    ///      suffers reputation.
+    function _resolveTrader(address sender, bytes calldata hookData)
+        internal
+        view
+        returns (address beneficiary, bool authenticated)
+    {
+        if (trustedRouters[sender]) {
             try IMsgSender(sender).msgSender() returns (address u) {
-                if (u != address(0)) return u;
+                if (u != address(0)) return (u, true);
             } catch {}
         }
-        return sender;
+        if (hookData.length >= 32) {
+            address t = abi.decode(hookData, (address));
+            if (t != address(0)) return (t, t == tx.origin);
+        }
+        return (sender, sender == tx.origin);
+    }
+
+    function setTrustedRouter(address router, bool trusted) external {
+        if (msg.sender != owner) revert NotOwner();
+        trustedRouters[router] = trusted;
+        emit TrustedRouterSet(router, trusted);
     }
 
     // ─────────────────────────────────── admin/views ───────────────────────────────
@@ -584,9 +677,35 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         });
     }
 
+    /// @notice Retune a pool's parameters within hard bounds.
+    /// @dev Params are read at SETTLE time, so any change is retroactive over in-flight
+    ///      bonds. The bounds below are what makes that safe: the owner can never (a) push
+    ///      more than 10% of a forfeit to itself, (b) construct a universal 100% forfeit
+    ///      (thetaMin/ramp >= 1), or (c) mature-and-grace pending swaps instantly
+    ///      (grace >= window, window >= 1).
     function setParams(PoolId id, HindsightParams calldata p) external {
         if (msg.sender != owner) revert NotOwner();
+        if (
+            p.bondBps > 100 || p.keeperTipBps > 1000 || p.twapWindowStamps == 0
+                || p.maturityStamps > 600 || p.thetaMinTicks < 1 || p.rampTicks < 1
+                || p.maxJumpTicks < 1 || p.epochStamps == 0 || p.graceStamps < p.twapWindowStamps
+        ) revert BadParams();
         poolParams[id] = p;
+    }
+
+    /// @notice Two-step ownership transfer (renounce by transferring to a burn address that
+    ///         can never accept — or simply never accepting).
+    function transferOwnership(address to) external {
+        if (msg.sender != owner) revert NotOwner();
+        pendingOwner = to;
+        emit OwnershipTransferStarted(owner, to);
+    }
+
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotOwner();
+        emit OwnershipTransferred(owner, pendingOwner);
+        owner = pendingOwner;
+        pendingOwner = address(0);
     }
 
     /// @notice Bond quote for a prospective swap (frontend preview). Conservative: uses
@@ -600,7 +719,9 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         uint256 cap0 = _bondCap(id, true, p.thetaMinTicks);
         uint256 cap1 = _bondCap(id, false, p.thetaMinTicks);
         uint256 cap = cap0 < cap1 ? cap0 : cap1;
-        return BondMathLib.bond(unspecifiedAmount, p.bondBps, _bondMultiplier(trader), p.sizeTierCap, cap);
+        return BondMathLib.bond(
+            unspecifiedAmount, p.bondBps, _bondMultiplier(trader, p.sizeTierCap), p.sizeTierCap, cap
+        );
     }
 
     /// @notice Preview a pending swap's provisional verdict with current data.
@@ -618,8 +739,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         dataOk = ok;
         if (ok) {
             markoutTicks = MarkoutLib.markout(r.execTick, twapTick, r.zeroForOne);
-            (uint256 vol,) = observations[r.poolId].avgAbsJump(windowStart, windowEnd);
-            thetaTicks = int256(uint256(int256(p.thetaMinTicks))) + int256(vol * p.thetaVolMultX10 / 10);
+            thetaTicks = _theta(r.poolId, p, windowStart, windowEnd);
             forfeitWad_ = MarkoutLib.forfeitWad(markoutTicks, thetaTicks, int256(p.rampTicks));
         }
     }

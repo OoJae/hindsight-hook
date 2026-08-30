@@ -22,8 +22,8 @@ import {HindsightHook} from "../../HindsightHook.sol";
 ///    via `registry.getForwarder(upkeepId)`); the hook's own `settle()` stays permissionless
 ///    — Chainlink guarantees liveness, it never gatekeeps.
 ///  - checkUpkeep results are stale by execution time, so performUpkeep re-validates:
-///    `settleBatch` skips already-settled ids instead of reverting (racing manual settles
-///    can never brick a batch).
+///    `settleBatch` settles each id through an external self-call inside try/catch, so an
+///    already-settled id (racing manual settle) or a poisoned record cannot brick a batch.
 ///  - performData stays under Base Sepolia's 1,000-byte cap: batches are ≤ MAX_BATCH ids.
 ///  - `s_scanStart` is a compaction cursor over the settled prefix. Swap ids are
 ///    chronological and maturity is time-ordered, so the earliest pending swap is always
@@ -57,6 +57,29 @@ contract HindsightUpkeep is AutomationCompatibleInterface {
     }
 
     /// @notice Set after registering each upkeep: registry.getForwarder(upkeepId).
+    /// @notice Keeper tips are paid to this contract when the DON drives settlement; this
+    ///         is the exit so they are not stranded.
+    function sweep(address token, address to) external {
+        if (msg.sender != owner) revert NotOwner();
+        if (token == address(0)) {
+            (bool ok,) = to.call{value: address(this).balance}("");
+            require(ok, "sweep failed");
+        } else {
+            (bool ok, bytes memory d) = token.call(
+                abi.encodeWithSignature("transfer(address,uint256)", to, _balanceOf(token))
+            );
+            require(ok && (d.length == 0 || abi.decode(d, (bool))), "sweep failed");
+        }
+    }
+
+    function _balanceOf(address token) internal view returns (uint256 bal) {
+        (bool ok, bytes memory d) =
+            token.staticcall(abi.encodeWithSignature("balanceOf(address)", address(this)));
+        if (ok && d.length >= 32) bal = abi.decode(d, (uint256));
+    }
+
+    receive() external payable {}
+
     function setForwarder(uint8 mode, address forwarder) external {
         if (msg.sender != owner) revert NotOwner();
         s_forwarder[mode] = forwarder;

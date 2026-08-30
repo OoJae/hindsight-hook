@@ -16,6 +16,7 @@ import {IERC20Minimal} from "@uniswap/v4-core/src/interfaces/external/IERC20Mini
 import {HindsightHook} from "../../src/HindsightHook.sol";
 import {IFlashblockNumber} from "../../src/interfaces/IFlashblockNumber.sol";
 import {MockFlashblockNumber} from "../../src/mocks/MockFlashblockNumber.sol";
+import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 
 /// Shared fixture: manager + hook + pool with deep liquidity + flashblock clock helpers.
 contract HindsightFixture is Test, Deployers {
@@ -53,13 +54,50 @@ contract HindsightFixture is Test, Deployers {
             ModifyLiquidityParams({tickLower: -6000, tickUpper: 6000, liquidityDelta: 5_000e18, salt: 0}),
             ZERO_BYTES
         );
+
+        // Reputation discounts require an explicitly configured whale guard (sizeTierCap).
+        // Deployments do this in script/02; mirror it here so tests exercise the real config.
+        hook.setParams(
+            poolId,
+            HindsightHook.HindsightParams({
+                bondBps: 25,
+                maturityStamps: 15,
+                twapWindowStamps: 10,
+                graceStamps: 3000,
+                thetaMinTicks: 3,
+                thetaVolMultX10: 28,
+                rampTicks: 20,
+                maxJumpTicks: 60,
+                keeperTipBps: 500,
+                epochStamps: 50,
+                sizeTierCap: 10e18
+            })
+        );
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────────
+    mapping(address => bool) internal funded;
+
+    /// @dev Give a test identity real balances/approvals so it can swap as itself.
+    function fundTrader(address who) internal {
+        if (funded[who] || who == address(this)) return;
+        funded[who] = true;
+        MockERC20(Currency.unwrap(currency0)).transfer(who, 100_000e18);
+        MockERC20(Currency.unwrap(currency1)).transfer(who, 100_000e18);
+        vm.startPrank(who);
+        MockERC20(Currency.unwrap(currency0)).approve(address(swapRouter), type(uint256).max);
+        MockERC20(Currency.unwrap(currency1)).approve(address(swapRouter), type(uint256).max);
+        vm.stopPrank();
+    }
+
+    /// @notice Swap as a real user: `beneficiary` is both msg.sender and tx.origin, which is
+    ///         what makes the hook's self-attribution authentic (see `_resolveTrader`).
     function swapAs(address beneficiary, bool zeroForOne, int256 amountSpecified)
         internal
         returns (BalanceDelta delta)
     {
+        fundTrader(beneficiary);
+        vm.prank(beneficiary, beneficiary);
         delta = swapRouter.swap(
             key,
             SwapParams({

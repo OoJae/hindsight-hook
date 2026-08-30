@@ -75,8 +75,10 @@ contract BatchSettleTest is HindsightFixture {
 
         (uint256[] memory ids,) = hook.pendingMatured(0, 50);
         assertGt(ids.length, 0);
+        uint256 keeperBefore = bal1(address(0xCAFE));
         vm.prank(address(0xCAFE));
         uint256 n = hook.settleBatch(ids);
         assertEq(n, ids.length, "all matured settled in one batch");
+        assertGt(bal1(address(0xCAFE)) - keeperBefore, 0, "batch keeper is actually tipped");
     }
 }

@@ -30,6 +30,7 @@ contract Handler is Test {
     uint256 public outstanding0; // Σ bonds of pending swaps denominated in currency0
     uint256 public outstanding1;
     uint256 public swapsExecuted;
+    mapping(uint256 => uint8) public seenStatus; // ghost: status the moment we settled it
     uint256 public settlesExecuted;
 
     constructor(
@@ -88,6 +89,7 @@ contract Handler is Test {
         try hook.settle(id) {
             if (r.bondIsCurrency0) outstanding0 -= r.bond;
             else outstanding1 -= r.bond;
+            seenStatus[id] = hook.getSwap(id).status;
             settlesExecuted++;
         } catch {}
     }

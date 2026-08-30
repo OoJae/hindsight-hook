@@ -42,8 +42,9 @@ contract UnichainSepoliaFork is Test {
     modifier onFork() {
         string memory rpc = vm.envOr("UNICHAIN_SEPOLIA_RPC_URL", string("https://sepolia.unichain.org"));
         try vm.createSelectFork(rpc) {} catch {
-            emit log("SKIP: Unichain Sepolia RPC unreachable");
-            return;
+            // NEVER `return` here: an early return in a modifier records a silent PASS,
+            // making an unreachable RPC look like a proven fork run.
+            vm.skip(true, "Unichain Sepolia RPC unreachable");
         }
         _setUpOnFork();
         _;

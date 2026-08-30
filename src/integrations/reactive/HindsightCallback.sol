@@ -17,7 +17,8 @@ import {HindsightHook} from "../../HindsightHook.sol";
 ///    Reactive infra overwrites with the RVM id (= RSC deployer) — authenticated via
 ///    `rvmIdOnly`, sender via `authorizedSenderOnly` (the callback proxy)
 ///  - callbacks NEVER revert (a reverting callback burns gas and creates debt for
-///    nothing): settlement uses the hook's non-reverting `trySettle`/`settleBatch`
+///    nothing): settlement goes through the hook's `trySettle`/`settleBatch`, which
+///    fault-isolate each record behind an external self-call + try/catch
 contract HindsightCallback is AbstractCallback {
     event SettleForwarded(uint256 indexed swapId, bool settled);
     event SweepForwarded(uint256 nSettled, uint256 newCursor);
@@ -25,6 +26,7 @@ contract HindsightCallback is AbstractCallback {
 
     HindsightHook public immutable hook;
     PoolId public immutable poolId;
+    address public owner;
     uint256 public s_cursor; // settled-prefix compaction cursor (ids are chronological)
 
     constructor(address _callbackProxy, HindsightHook _hook, PoolId _poolId)
@@ -33,6 +35,20 @@ contract HindsightCallback is AbstractCallback {
     {
         hook = _hook;
         poolId = _poolId;
+        owner = msg.sender;
+    }
+
+    /// @notice Keeper tips land here when Reactive drives settlement; this is the exit so
+    ///         they are not stranded (AbstractPayer only handles native for callback debt).
+    function sweep(address token, address to) external {
+        require(msg.sender == owner, "not owner");
+        (bool ok, bytes memory d) = token.staticcall(
+            abi.encodeWithSignature("balanceOf(address)", address(this))
+        );
+        uint256 bal = (ok && d.length >= 32) ? abi.decode(d, (uint256)) : 0;
+        (bool sent, bytes memory r) =
+            token.call(abi.encodeWithSignature("transfer(address,uint256)", to, bal));
+        require(sent && (r.length == 0 || abi.decode(r, (bool))), "sweep failed");
     }
 
     /// @notice Settle one swap (triggered by the RSC on SwapRecorded, ≥5s later).

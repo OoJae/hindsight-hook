@@ -47,15 +47,15 @@ contract ConservationInvariant is HindsightFixture {
         assertEq(bal1(address(hook)), uint256(pot1), "INV2: c1 custody == pot");
     }
 
+    /// INV3: once settled, a swap's verdict is immutable — compared against the status the
+    /// handler recorded at settlement time (a real ghost, not a tautology).
     function invariant_settled_stay_settled() public view {
         uint256 n = hook.nextSwapId();
-        uint256 pendingCount;
         for (uint256 i; i < n; i++) {
-            uint8 st = hook.getSwap(i).status;
-            if (st == 0) pendingCount++;
-            else assertLe(st, 2, "status domain");
+            uint8 seen = handler.seenStatus(i);
+            if (seen != 0) {
+                assertEq(hook.getSwap(i).status, seen, "INV3: settled verdict changed");
+            }
         }
-        // pending ghost consistency: count implied by outstanding sums can't be negative (implicit)
-        assertLe(handler.settlesExecuted(), n, "settles bounded by swaps");
     }
 }

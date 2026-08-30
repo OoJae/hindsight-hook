@@ -39,8 +39,9 @@ contract BaseSepoliaFork is Test {
     modifier onFork() {
         string memory rpc = vm.envOr("BASE_SEPOLIA_RPC_URL", string("https://sepolia.base.org"));
         try vm.createSelectFork(rpc) {} catch {
-            emit log("SKIP: Base Sepolia RPC unreachable");
-            return;
+            // NEVER `return` here: an early return in a modifier records a silent PASS,
+            // making an unreachable RPC look like a proven fork run.
+            vm.skip(true, "Base Sepolia RPC unreachable");
         }
         _setUpOnFork();
         _;

@@ -47,11 +47,13 @@ contract DonationFlushTest is HindsightFixture {
             ModifyLiquidityParams({tickLower: -6000, tickUpper: 6000, liquidityDelta: 0, salt: 0}),
             ZERO_BYTES
         );
-        uint256 before1 = bal1(address(this));
-
         _forfeitOne();
         advanceTo(stampNow() + 51);
         hook.flushDonations(poolId);
+
+        // Snapshot AFTER all swap/funding traffic: the only balance change left is the
+        // fee collection below, so the delta isolates what LPs actually received.
+        uint256 before1 = bal1(address(this));
 
         // Collect fees (liquidityDelta = 0 pokes the position and pays out fee growth).
         modifyLiquidityRouter.modifyLiquidity(

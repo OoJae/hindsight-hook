@@ -32,6 +32,23 @@ library ObservationLib {
         return true;
     }
 
+    /// @notice Like `write`, but REFRESHES the newest entry in place when the stamp matches.
+    /// @dev Required for the post-swap tick: `beforeSwap` already wrote the pre-swap price at
+    ///      this same stamp, so a plain `write` would be a no-op and the trade's own impact
+    ///      would never enter the series — leaving swaps scored against their own pre-trade
+    ///      price. Backwards stamps are ignored rather than corrupting the buffer.
+    function writeOrUpdate(Buffer storage self, uint48 stamp, int24 tick) internal {
+        if (self.count != 0) {
+            uint16 newestIdx = (self.index + CARDINALITY - 1) % CARDINALITY;
+            if (self.obs[newestIdx].stamp == stamp) {
+                self.obs[newestIdx].tick = tick;
+                return;
+            }
+            if (self.obs[newestIdx].stamp > stamp) return; // clock went backwards: ignore
+        }
+        write(self, stamp, tick);
+    }
+
     /// @notice Jump-clamped time-weighted average tick over stamps [from, to].
     /// @return avgTick  the TWAP tick
     /// @return nObs     observations that informed the window (incl. the one entering it)
@@ -100,7 +117,7 @@ library ObservationLib {
     ///         in [from, to] — a cheap realized-volatility proxy used to scale the toxicity
     ///         threshold θ (spec 3.4): trending/volatile windows widen θ so benign momentum
     ///         flow is not confiscated.
-    function avgAbsJump(Buffer storage self, uint48 from, uint48 to)
+    function avgAbsJump(Buffer storage self, uint48 from, uint48 to, int24 maxJumpTicks)
         public
         view
         returns (uint256 meanJumpTicks, uint16 nJumps)
@@ -116,7 +133,13 @@ library ObservationLib {
             if (o.stamp > to) break;
             if (havePrev) {
                 int256 j = int256(o.tick) - int256(prevTick);
-                sumAbs += uint256(j < 0 ? -j : j);
+                uint256 absJ = uint256(j < 0 ? -j : j);
+                // Same contribution cap the TWAP applies: a single spike must not be able to
+                // inflate theta (which would let the trade that caused it escape as "benign").
+                if (maxJumpTicks > 0 && absJ > uint256(uint24(maxJumpTicks))) {
+                    absJ = uint256(uint24(maxJumpTicks));
+                }
+                sumAbs += absJ;
                 nJumps++;
             }
             prevTick = o.tick;
