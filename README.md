@@ -1,5 +1,8 @@
 # Hindsight
 
+[![tests](https://github.com/OoJae/hindsight-hook/actions/workflows/ci.yml/badge.svg)](https://github.com/OoJae/hindsight-hook/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **Ex-post markout-settled fees for Uniswap v4 — the fee is decided *after* your trade.**
 
 > Every deployed MEV defense prices flow **before** it knows anything — volatility guesses, priority-fee taxes, auctions for rights. Hindsight prices flow from the one signal that cannot be faked, spoofed, or revert-spammed: **what the price actually did after your trade landed.** Benign flow is refunded to ~0. Informed flow pays its realized adverse-selection cost — streamed back to LPs.

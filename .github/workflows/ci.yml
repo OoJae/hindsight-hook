@@ -1,0 +1,35 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  forge:
+    name: forge test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      # Only the dependencies the test suite actually needs — the full recursive tree
+      # pulls ~1GB of unrelated nested submodules.
+      - name: Fetch dependencies
+        run: |
+          git submodule update --init lib/forge-std lib/reactive-lib lib/v4-hooks-public
+          git -C lib/v4-hooks-public submodule update --init --recursive lib/v4-core lib/v4-periphery
+          git -C lib/v4-hooks-public submodule update --init lib/openzeppelin-contracts lib/solady lib/forge-std
+
+      - name: Build
+        run: forge build --sizes
+
+      # Fork tests are excluded: they need live RPCs. They SKIP loudly rather than
+      # silently passing when an RPC is unavailable (see test/fork/*).
+      - name: Test
+        run: forge test --no-match-path 'test/fork/*' -vv
+
+      - name: Gas report
+        run: forge test --no-match-path 'test/fork/*' --gas-report | tail -60
