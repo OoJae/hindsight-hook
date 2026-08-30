@@ -61,32 +61,59 @@ The newest generation of defenses (priority-fee MEV taxes à la Angstrom L2 / Ba
 
 ## Sustainable liquidity, quantified — on real mainnet flow
 
-`backtest/` replays **7 days of real Unichain mainnet ETH/USDC swaps** through the on-chain
-markout logic — same markout formula, same volatility-scaled θ, same linear forfeit ramp, and
-the same ±60-tick jump clamp. Two on-chain features are deliberately *not* modelled, both of
-which make the figures below conservative or neutral rather than flattering:
+`backtest/` re-prices **7 days of real Unichain mainnet ETH/USDC swaps** (55,822 of them)
+under each mechanism. Every number below is a *re-pricing of identical realized trades* —
+no simulated agents, no behavioural assumptions. Reproduce with one command:
+`cd backtest && .venv/bin/python compare.py`.
 
-| divergence | measured effect |
+### 1. How much of the bleeding does it actually stop?
+
+| | |
 |---|---|
-| jump clamp on the θ input | **$0.00** — implemented and compared; only ~4 of 55,822 jumps exceed 60 ticks |
-| liquidity-scaled bond cap | never binds on this pool (max bond ÷ cap ≈ 0.1), so it cannot inflate the result |
-| reputation multiplier | not modelled; it would **raise** the clawback (repeat extractors would post up to 3× bonds) |
+| LP fee income (status quo, 5 bps) | $6,690.77 |
+| Gross realized adverse selection | $2,758.00 |
+| Net LP markout P&L, ex-fees (the 5s LVR bleed) | −$525.54 |
+| **Hindsight clawback** | **$1,071.39** (net of keeper tips: $1,017.82 to LPs) |
+| **ρ = clawback ÷ realized adverse selection** | **38.8%** |
+| **clawback ÷ net LVR bleed** | **2.0×** |
 
-Timing is block-granular offline while the hook is 200ms-granular on Unichain — also conservative.
+**Hindsight recovers 39% of the adverse selection LPs actually suffered — twice the pool's
+entire net 5-second LVR bleed.**
 
+### 2. Same LP revenue — who pays it? (the whole thesis, measured)
 
-| ETH/USDC 5bp pool, 7 days | |
-|---|---|
-| swaps replayed | **55,822** ($13.4M volume) |
-| LP fee income (status quo) | $6,691 |
-| **Hindsight clawback on top** | **+$1,071 gross (+16.0%)** — net of the 5% keeper tip, **+$1,018 to LPs (+15.2%)** |
-| toxic flow identified | 9.9% of swaps, 12.9% of volume |
-| benign effective fee | **exactly 5.00 bps** (bond fully refunded) |
-| toxic effective fee | 11.2 bps (fee + forfeited bond) |
+Calibrate a volatility-scaled dynamic fee to raise *exactly* the revenue Hindsight raises
+on the same flow, and ask who hands over the incremental money:
 
-The top three forfeiting addresses are unmistakable bots (27,901 / 9,434 / 6,362 swaps in a week) — matching the research finding that a handful of searchers capture most CEX-DEX extraction. Meanwhile **90% of swaps pay exactly the headline fee**.
+| mechanism | benign flow pays | toxic flow pays | share of incremental revenue from **benign** flow |
+|---|---|---|---|
+| Flat fee (5.80 bps) | 5.80 bps | 5.80 bps | **87.1%** |
+| Volatility-scaled dynamic fee (5 + 2.875·σ) | 5.68 bps | 5.76 bps | **83.0%** |
+| **Hindsight** | **5.00 bps** | **10.29 bps** | **0.0%** |
 
-Plus the worked example from the mechanism design: a benign trader pays **$50 per $100k swap** vs $300 on a 30bps pool; break-even recapture for LPs vs a 30bps pool is just 12%.
+The dynamic fee charges toxic flow **5.76 bps** and benign flow **5.68 bps** — a 1.4% gap.
+It cannot tell them apart. Hindsight charges **10.29 vs 5.00** — a 106% gap, with every
+benign bond refunded in full. This is the organizers' own framing of the problem
+("a dynamic fee can't tell the difference between a retail trader and a bot") turned into
+a measurement. ![who pays](backtest/chart_who_pays.png)
+
+### 3. We tax information, not volatility
+
+Calibrate a *static* threshold to flag the same number of swaps, then bucket by realized-
+volatility decile. In the most volatile decile the static threshold confiscates **2.3×**
+more flow; the volatility-scaled threshold spares volatile-but-uninformed traders while
+catching *more* in the quiet deciles, where a price move really does imply information.
+![vol decile](backtest/chart_vol_decile.png)
+
+### 4. Not tuned to a lucky window
+
+ρ stays in a **39–59% band across a 60× range of settlement horizons** (1s → 80s), and the
+k × θ_min sensitivity grid is smooth and monotone with no cliffs. Honest note: θ_min
+dominates k on this tape (θ_min 3→12 ticks cuts the clawback ~70%; k 1.5→6.0 cuts it ~23%)
+— §3 above is where the k term earns its keep. ![horizon](backtest/chart_horizon.png)
+
+Plus the worked example from the mechanism design: a benign trader pays **$50 per $100k
+swap** vs $300 on a 30 bps pool.
 
 ## Partner integrations
 
