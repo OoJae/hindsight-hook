@@ -25,7 +25,7 @@ repro committed *before* the fix (`test/integration/AuditRepro2.t.sol`,
 ### Unichain Sepolia (1301) — primary, flashblock-native
 | Contract | Address |
 |---|---|
-| **HindsightHook v6** | `0xcEC97e16765395c6F1Af849625b21b4a532110c4` |
+| **HindsightHook v6** | `0x4475d1A77cb15f7867A37877B3f59E9a847990C4` |
 | dETH (token0) | `0x1FD46d8F28EA465b228Df9Ef0A8A00cB7f9A3906` |
 | dUSDC (token1) | `0x7EFC03C77728919a56e2843817B824A8556aC744` |
 | PoolSwapTest router | `0x39c026aC59e106B353b27b809E8bC7c698d57F9B` |
