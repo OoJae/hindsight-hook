@@ -119,6 +119,13 @@ export default function Explorer() {
         break the result.
       </p>
 
+      <p className="muted" style={{ fontSize: 13, marginTop: -6 }}>
+        Precision note: the tape ships as float32 to keep the download small, so figures here
+        can differ from <code>backtest/compare.py</code> in the last ~0.5% (e.g. 12.11 vs 12.18
+        bps). The Python suite on the full-precision CSV is the number of record; this is a
+        faithful, checkable approximation of it.
+      </p>
+
       <div className="row" style={{ alignItems: "flex-start", gap: 24 }}>
         <div className="card" style={{ flex: "1 1 320px" }}>
           <div className="row" style={{ justifyContent: "space-between" }}>

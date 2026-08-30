@@ -12,7 +12,7 @@ Built for the **UHI10 Hookathon** (theme: *Sustainable Liquidity & MEV Protectio
 **🔗 Live app (Unichain Sepolia): https://oojae.github.io/hindsight-hook/**
 **🔬 Interactive evidence: https://oojae.github.io/hindsight-hook/explorer/** — re-prices all
 55,822 real mainnet swaps *in your browser* under any parameters you choose. Try to break it.
-**Hook:** `0xeb77d98A9dfB72Fb17d196a3ec08F985bF0510c4` · all addresses in [`DEPLOYMENTS.md`](DEPLOYMENTS.md) — watch the real
+**Hook:** `0xcEC97e16765395c6F1Af849625b21b4a532110c4` · all addresses in [`DEPLOYMENTS.md`](DEPLOYMENTS.md) — watch the real
 flashblock counter tick, get a bond quote, and see live settlements incl. an actual toxic
 forfeit. Connect any wallet on Unichain Sepolia to swap ("Mint demo tokens" gives you balance).
 
@@ -119,15 +119,17 @@ judge that choice yourself.
 Calibrate a volatility-scaled dynamic fee to raise *exactly* the revenue Hindsight raises on
 the same flow, then ask who hands over the incremental money:
 
-| mechanism | benign pays | toxic pays | incremental revenue from **benign** flow |
-|---|---|---|---|
-| Flat fee (6.75 bps) | 6.75 bps | 6.75 bps | **75.7%** |
-| Volatility-scaled dynamic fee (5 + 4.22·σ) | 6.58 bps | 6.64 bps | **71.9%** |
-| **Hindsight** | **5.00 bps** | **11.05 bps** | **0.0%** |
+| mechanism | benign pays | toxic pays | separation | incremental revenue from **benign** flow |
+|---|---|---|---|---|
+| Flat fee (6.75 bps) | 6.75 bps | 6.75 bps | 1.0× | **75.7%** |
+| Volatility-scaled dynamic fee (5 + 4.22·σ) | 6.66 bps | 7.02 bps | 1.05× | **71.9%** |
+| **Hindsight** | **5.00 bps** | **12.18 bps** | **2.44×** | **0.0%** |
 
-The dynamic fee charges toxic flow 6.64 bps and benign flow 6.58 bps — a 0.9% gap. It
-cannot tell them apart. Hindsight charges 11.05 vs 5.00, with every benign bond refunded in
-full. ![who pays](backtest/chart_who_pays.png)
+All fees are volume-weighted — what a dollar of flow actually pays, and the same definition
+the [browser explorer](https://oojae.github.io/hindsight-hook/explorer/) and `replay.py` use,
+so all three agree. Given the *same* LP revenue, the best ex-ante signal available in
+`beforeSwap` separates toxic from benign flow by **5%**; Hindsight separates them by **144%**,
+and every benign bond comes back in full. ![who pays](backtest/chart_who_pays.png)
 
 ### 3. Two obvious objections, answered with data
 
@@ -159,19 +161,40 @@ the result strengthens:
 | excluding top sender (n=27,920) | **48.3%** | 71.7% |
 | excluding top-3 (n=12,128) | **53.5%** | 78.6% |
 
-### 4. Not tuned to a lucky window
+### 4. We tax information, not volatility
+
+The threshold θ scales with short-horizon realized volatility, so a violent-but-uninformed
+tape does not get confiscated. To show that term is doing real work, we calibrate a *static*
+θ (4.0 ticks) to flag the same total number of swaps (12,010 vs 12,071) and compare what each
+flags, by realized-volatility decile:
+
+| vol decile | static θ flags | vol-scaled θ flags |
+|---|---|---|
+| 1 (quietest) | 13.0% | 18.7% |
+| 5 | 11.1% | 16.6% |
+| 9 | 31.5% | 18.9% |
+| **10 (most volatile)** | **44.3%** | **24.2%** |
+
+Same total flow flagged — but in the most volatile decile the static threshold confiscates
+**1.8× more**, while the vol-scaled one *shifts* its attention toward quiet-tape flow, where
+a large directional move is far more likely to be information than noise. That is the
+mechanism refusing to charge traders for being unlucky.
+![vol decile](backtest/chart_vol_decile.png)
+
+### 5. Not tuned to a lucky window
 
 ρ moves 42.5% → 58.6% across a 60× horizon range and the k × θ_min sensitivity grid is
-smooth and monotone with no cliffs. Honest note: θ_min dominates k on this tape — §3 above is
-where the k term earns its keep. ![horizon](backtest/chart_horizon.png)
+smooth and monotone with no cliffs. Honest note: θ_min dominates k on this tape (θ_min 3→12
+cuts the clawback ~70%; k 1.5→6.0 cuts it ~23%) — §4 above is where the k term earns its
+keep. ![horizon](backtest/chart_horizon.png)
 
 ## Partner integrations
 
 - **Unichain** — the mechanism is flashblock-native: settlement windows are measured on **Uniswap's official FlashblockNumber contract** (live builder-maintained proxies: mainnet [`0x3c3a…1ec3→proxy 0x3c3a8a41e095c76b03f79f70955fff3b03cf753e`], Sepolia [`0x056466f1a50a6B5e4DCCF106074ee0083D721a42`] — verified ticking at 200ms cadence). To our knowledge this is the **first v4 hook to consume it**. Graceful `block.number` fallback + owner emergency switch if builder infra ever halts; `src/OperatedFlashblockNumber.sol` mirrors the official V1 allowlist pattern as a contingency. Fork tests run the full cycle against the **real Unichain Sepolia PoolManager**.
 
-- **Reactive Network** — **live and verified end-to-end.** An RSC on Reactive Lasna (`src/integrations/reactive/HindsightReactive.sol`, deployed `0x54893ee6300BE90eF771fd17437600b6b1421e7C`) subscribes to the hook's `SwapRecorded` events on Unichain Sepolia plus Cron sweep/flush topics, and drives settlement through the official callback proxy into `HindsightCallback` (`0x0caa8dE2A2aE4565987C0203B81aaB47D1cc70E6`). The current v3 deployment settles autonomously in ~24s; the first such settlement we captured a tx hash for was on the v1 bytecode: `0xacc2cf71beba00a94862f41aafe62d185fb93d30eabcc4d1c68db029d86b11c4` (29s). Settlement liveness without any operated infrastructure.
+- **Reactive Network** — **live and verified end-to-end.** An RSC on Reactive Lasna (`src/integrations/reactive/HindsightReactive.sol`, deployed `0xF065d60db3aE5372BcC16c57D520aADd3116718A`) subscribes to the hook's `SwapRecorded` events on Unichain Sepolia plus Cron sweep/flush topics, and drives settlement through the official callback proxy into `HindsightCallback` (`0xb8d4CE44e1BaB3B712daE6568B51f9B7F85Fe9E8`). The current v4 deployment settles autonomously ~60s after the swap (10s maturity + 5s window + RSC latency); the first such settlement we captured a tx hash for was on the v1 bytecode, when the horizon was shorter: `0xacc2cf71beba00a94862f41aafe62d185fb93d30eabcc4d1c68db029d86b11c4` (29s). Settlement liveness without any operated infrastructure.
 
-- **Chainlink Automation** — `src/integrations/chainlink/HindsightUpkeep.sol` deployed on Base Sepolia (`0x128dfBf63d16f0969f9c39587D0D4080B76A0488`) against a second, chain-identical hook deployment (`0xE8eD0B1f0c14A09F84fC912C2cce90e77DEbd0C4`, running the hook's `block.number` fallback clock): three-mode conditional upkeep (settle/flush/poke), forwarder-gated, **three upkeeps registered programmatically against the live v2.3 registrar** (the web UI is deprecated to withdraw-only; we encoded the v2.3 `RegistrationParams` incl. `billingToken` by hand), auto-approved, LINK-funded, forwarders wired on-chain. Full transparency: Chainlink sunset classic-Automation testnet execution in mid-2026 and the Base Sepolia DON currently performs nothing for anyone (30h registry scan: zero `UpkeepPerformed` events) — so the perform path is proven by the fork suite executing the complete check→perform→refund cycle against the real Base Sepolia PoolManager (reproduce: `BASE_SEPOLIA_RPC_URL=<rpc> forge test --mc BaseSepoliaFork -vv`, ~13s; without an RPC the fork tests SKIP loudly rather than passing silently).
+- **Chainlink Automation** — `src/integrations/chainlink/HindsightUpkeep.sol` deployed on Base Sepolia (`0xDED9BF5E6bE87A82bDa4f9C268efe066FfADb468`) against a second, chain-identical hook deployment (`0xdE2C8325275E86B61F9BA3b413cc43a905ba90C4`, running the hook's `block.number` fallback clock): three-mode conditional upkeep (settle/flush/poke), forwarder-gated, **three upkeeps registered programmatically against the live v2.3 registrar** (the web UI is deprecated to withdraw-only; we encoded the v2.3 `RegistrationParams` incl. `billingToken` by hand), auto-approved, LINK-funded, forwarders wired on-chain. This leg also proves the **fallback clock end-to-end on a chain with no flashblocks**: a live retail swap stamped at `461731830` (a `block.number × 10` stamp), `checkUpkeep(settle)` flipping false→true on-chain as the window closed, and `settle(0)` returning the full bond — tx `0x9984206868526b036a5e8bd6932063a2d3cbde1047fb01eef43cbd21b521796c`. Full transparency: Chainlink sunset classic-Automation testnet execution in mid-2026 and the Base Sepolia DON currently performs nothing for anyone (30h registry scan: zero `UpkeepPerformed` events) — so the perform path is proven by the fork suite executing the complete check→perform→refund cycle against the real Base Sepolia PoolManager (reproduce: `BASE_SEPOLIA_RPC_URL=<rpc> forge test --mc BaseSepoliaFork -vv`, ~13s; without an RPC the fork tests SKIP loudly rather than passing silently).
 
 See `DEPLOYMENTS.md` for all addresses and proof transactions.
 
@@ -187,12 +210,21 @@ src/
   OperatedFlashblockNumber.sol testnet counter mirroring the official V1 pattern
   mocks/MockFlashblockNumber.sol
 script/                        00 counter → 01 hook (HookMiner) → 02 pool+liquidity → 03 demo flows
+tools/verify_deployment.py     byte-for-byte: this source == the live hooks on both chains
 bot/keeper.mjs                 poke() open windows, settle() matured swaps, flushDonations()
-backtest/                      fetch.py + replay.py against real Unichain mainnet swaps
+backtest/
+  swaps_eth_usdc_5bp.csv.gz    7 days of REAL Unichain mainnet swaps (55,822), committed
+  fetch.py                     rebuilds that tape from RPC (not needed to reproduce)
+  replay.py                    headline stats + charts
+  compare.py                   the 8-section evidence suite: null, LVR decomposition,
+                               revenue-matched head-to-head, horizons, vol deciles,
+                               sensitivity, out-of-sample, concentration, permutation
 test/
   spike/DeltaSigns.t.sol       bond delta math across ALL FOUR swap configs
   unit/                        fuzzed library tests
   integration/                 settlement, donation drip + LP accrual, reputation
+  integration/AuditRepro.t.sol      one regression test per surviving audit finding
+  integration/EvictionExploit.t.sol the round-2 critical: exploit, then closure
   invariant/                   claims exactly back pending bonds; custody == pot
   fork/UnichainSepolia.t.sol   full cycle vs the REAL PoolManager + REAL flashblock counter
 ```
@@ -210,15 +242,18 @@ git clone https://github.com/OoJae/hindsight-hook && cd hindsight-hook
 git submodule update --init lib/reactive-lib lib/v4-hooks-public
 git -C lib/v4-hooks-public submodule update --init --recursive lib/v4-core lib/v4-periphery
 git -C lib/v4-hooks-public submodule update --init lib/openzeppelin-contracts lib/solady lib/forge-std
-forge test                                   # 101 tests: unit, integration, invariant
+forge test                                   # 109 tests: unit, integration, invariant
 forge test --match-path 'test/fork/*'        # +5 fork tests (needs an RPC; SKIPs loudly without one)
 forge test --mc UnichainSepoliaFork -vv      # fork suite vs real Unichain Sepolia state
 forge test --gas-report
+python3 tools/verify_deployment.py          # proves this source IS the live bytecode
 
-# backtest on real mainnet swaps
+# backtest on real mainnet swaps — the tape is COMMITTED (swaps_*.csv.gz), so this
+# reproduces every published number offline, with no RPC and no fetch step
 cd backtest && python3 -m venv .venv && .venv/bin/pip install matplotlib
-.venv/bin/python fetch.py 7                  # 7 days of ETH/USDC swaps (1bp + 5bp pools)
-.venv/bin/python replay.py                   # stats + charts
+.venv/bin/python compare.py                  # every number in "Sustainable liquidity, quantified"
+.venv/bin/python replay.py                   # headline stats + charts
+.venv/bin/python fetch.py 7                  # (optional) rebuild the tape from RPC yourself
 
 # deploy (Unichain Sepolia)
 cp .env.example .env                         # fill PRIVATE_KEY
@@ -251,10 +286,17 @@ cd bot && npm i && npm start                 # keeper: poke/settle/flush
 
 ### Audit
 A multi-agent adversarial audit (4 attack lanes + independent verification of every finding)
-was run against this codebase; the resulting fixes are the v3 deployment. Two of the
-headline claims did not reproduce under our own repro tests and were dropped rather than
-"fixed" — the surviving issues, their exploits, and their regression tests live in
-`test/integration/AuditRepro.t.sol`.
+was run against this codebase **twice**. Round 1's fixes are the v3 deployment; two of its
+four headline claims did not reproduce under our own repro tests and were dropped rather
+than "fixed". Round 2 found a genuine **critical**: an attacker could evict a pending
+swap's observation window from the 128-slot ring buffer with cheap micro-swaps, and the
+resulting "no data" branch refunded the bond in full — buying your way out of a forfeit.
+v4 closes it with a permissionless `finalize(swapId)` that snapshots the verdict the
+instant the window closes, plus a `_noDataVerdict` that distinguishes *destroyed* data
+(forfeit, ungraded) from *absent* data (refund). Every surviving issue, its exploit, and
+its regression test lives in `test/integration/AuditRepro.t.sol` and
+`test/integration/EvictionExploit.t.sol` — the latter reproduces the exploit against the
+old logic and confirms it is closed against the new.
 
 ## Future work
 

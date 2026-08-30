@@ -99,7 +99,6 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     // ─────────────────────────────────── storage ───────────────────────────────────
     IFlashblockNumber public immutable flashblockNumber;
     uint256 public immutable fallbackStampsPerBlock; // scaling for the block.number fallback
-    bool public clockFallbackForced;
     address public owner;
     address public pendingOwner;
 
@@ -194,24 +193,18 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     ///      not start at block 0 — so it must never be compared against a block-derived
     ///      floor (on Unichain Sepolia block.number*10 exceeds the live counter).
     ///      Rule: a present, nonzero, non-reverting counter is authoritative; the
-    ///      block.number fallback applies only when the counter is absent/zero/reverting,
-    ///      or when the owner has forced the fallback after a builder-infra failure.
-    ///      NOTE: forcing the fallback changes the clock's origin — only do it on pools
-    ///      with no pending settlements (documented emergency action).
+    ///      block.number fallback applies only when the counter is absent, zero, or
+    ///      reverting — never at the owner's discretion. (An owner-forced clock switch was
+    ///      removed: it would change the clock's ORIGIN mid-flight, which is exactly the
+    ///      kind of retroactive power the bounded-setParams design exists to deny.)
     function currentStamp() public view returns (uint48) {
         address fb = address(flashblockNumber);
-        if (!clockFallbackForced && fb.code.length > 0) {
+        if (fb.code.length > 0) {
             try IFlashblockNumber(fb).getFlashblockNumber() returns (uint256 n) {
                 if (n != 0) return uint48(n);
             } catch {}
         }
         return uint48(block.number * fallbackStampsPerBlock);
-    }
-
-    /// @notice Emergency clock switch should the builder-maintained counter die.
-    function forceClockFallback(bool forced) external {
-        if (msg.sender != owner) revert NotOwner();
-        clockFallbackForced = forced;
     }
 
     // ─────────────────────────────────── hooks ─────────────────────────────────────
@@ -610,16 +603,6 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         r.fMarkout = int24(MarkoutLib.markout(r.execTick, twapTick, r.zeroForOne));
         r.fTheta = int24(_theta(r.poolId, p, windowStart, windowEnd));
         r.finalized = true;
-    }
-
-    /// @notice Finalize a batch of matured swaps (keeper convenience).
-    function finalizeBatch(uint256[] calldata swapIds) external {
-        for (uint256 i; i < swapIds.length; i++) {
-            SwapRecord storage r = swaps[swapIds[i]];
-            if (r.trader == address(0) || r.finalized || r.status != 0) continue;
-            if (!_matured(r)) continue;
-            finalize(swapIds[i]);
-        }
     }
 
     /// @notice Permissionless price checkpoint for quiet pools during settlement windows.

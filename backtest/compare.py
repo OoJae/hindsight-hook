@@ -17,6 +17,23 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+def _open(path):
+    """Open a backtest CSV, transparently accepting the committed .gz form.
+
+    The repo ships `swaps_*.csv.gz` (2.0MB) rather than the 7.6MB raw CSV, so a
+    fresh clone can reproduce every published number with no fetch step.
+    """
+    import gzip, os
+    if os.path.exists(path):
+        return open(path)
+    if os.path.exists(path + ".gz"):
+        return gzip.open(path + ".gz", "rt")
+    raise FileNotFoundError(
+        f"{path} (and {path}.gz) not found — run `python3 fetch.py` to rebuild it"
+    )
+
+
+
 BOND_BPS = 25
 N_SEC, W_SEC = 10, 5   # see the permutation null in section 8: at 3+2s the
                        # signal is not separable from chance; at 10+5s it is (z=+4.4)
@@ -30,7 +47,7 @@ KEEPER_TIP_BPS = 500  # of the forfeit
 
 
 def load(path="swaps_eth_usdc_5bp.csv"):
-    rows = list(csv.DictReader(open(path)))
+    rows = list(csv.DictReader(_open(path)))
     for r in rows:
         for k in ("block", "tick", "amount0", "amount1", "fee"):
             r[k] = int(r[k])
@@ -122,7 +139,7 @@ def lvr_decomposition(res):
     print(f"swaps re-priced                  {len(res):>12,}")
     print(f"LP fee income (status quo)       {money(fees):>12}")
     print(f"gross adverse selection          {money(gross_as):>12}   (sum notional x positive markout)")
-    print(f"net LP markout P&L, ex-fees      {money(net_markout):>12}   (the 5s LVR bleed)")
+    print(f"net LP markout P&L, ex-fees      {money(net_markout):>12}   (the {N_SEC+W_SEC}s LVR bleed)")
     print(f"Hindsight clawback (gross)       {money(claw):>12}")
     print(f"  less keeper tips (5%)          {money(-tip):>12}")
     print(f"  net to LPs                     {money(claw - tip):>12}")
@@ -159,13 +176,20 @@ def revenue_matched(res, fees, claw):
     print(f"revenue-matched dynamic fee    = {HEADLINE_FEE_BPS:.0f} + {c:.3f}*sigma bps")
     print(f"revenue-matched FLAT fee       = {flat:.3f} bps  (charged to every swap)")
     print()
-    print(f"{'':28s}{'benign':>14}{'toxic':>14}")
-    print(f"{'  mean effective fee (dyn)':28s}"
-          f"{statistics.mean([HEADLINE_FEE_BPS + c * r['vol'] for r in ben]):>13.2f}b"
-          f"{statistics.mean([HEADLINE_FEE_BPS + c * r['vol'] for r in tox]):>13.2f}b")
-    print(f"{'  mean effective fee (Hindsight)':28s}"
+    # Volume-weighted: what a dollar of flow actually pays, and what LPs actually collect.
+    # (replay.py and the browser explorer use the same definition, so all three agree.)
+    def vw(rows_, per_swap_usd):
+        v = sum(r["usd"] for r in rows_)
+        return 1e4 * sum(per_swap_usd(r) for r in rows_) / max(v, 1e-9)
+
+    dyn = lambda r: r["usd"] * (HEADLINE_FEE_BPS + c * r["vol"]) / 1e4
+    print(f"{'':32s}{'benign':>14}{'toxic':>14}")
+    print(f"{'  effective fee (dyn, vol-wtd)':32s}"
+          f"{vw(ben, dyn):>13.2f}b"
+          f"{vw(tox, dyn):>13.2f}b")
+    print(f"{'  effective fee (Hindsight)':32s}"
           f"{HEADLINE_FEE_BPS:>13.2f}b"
-          f"{statistics.mean([(r['fee'] + r['forfeit']) / r['usd'] * 1e4 for r in tox]):>13.2f}b")
+          f"{vw(tox, lambda r: r['fee'] + r['forfeit']):>13.2f}b")
     print()
     print(f"share of the INCREMENTAL revenue paid by BENIGN flow:")
     print(f"   volatility-scaled dynamic fee   {100 * inc_ben / (inc_ben + inc_tox):>6.1f}%")
@@ -181,7 +205,7 @@ def horizon_robustness(rows):
         fees = sum(x["fee"] for x in r)
         claw = sum(x["forfeit"] for x in r)
         gas = sum(x["usd"] * max(0.0, x["markout"]) / 1e4 for x in r)
-        tag = "  <- shipped" if (n, w) == (3, 2) else ""
+        tag = "  <- shipped" if (n, w) == (N_SEC, W_SEC) else ""
         print(f"{f'{n},{w}':>10}{money(claw):>13}{100*claw/fees:>9.1f}%{money(gas):>12}"
               f"{100*claw/gas:>7.1f}%{tag}")
 
@@ -335,8 +359,8 @@ def chart_horizon(rows):
         pts.append((n + w, 100 * claw / gas))
     fig, ax = plt.subplots(figsize=(9, 5))
     ax.plot([p[0] for p in pts], [p[1] for p in pts], "o-", color=PALETTE["hind"], lw=2)
-    ax.axhline(38.8, ls="--", color=PALETTE["other"], lw=1)
-    ax.annotate("shipped (5s)", xy=(5, 38.8), xytext=(9, 33),
+    ax.axhline(46.7, ls="--", color=PALETTE["other"], lw=1)
+    ax.annotate("shipped (15s)", xy=(15, 46.7), xytext=(25, 36),
                 arrowprops=dict(arrowstyle="->", color="#334155"))
     ax.set_xscale("log"); ax.set_xlabel("settlement horizon N+W (seconds, log scale)")
     ax.set_ylabel(r"$\rho$ = clawback / realized adverse selection (%)")
@@ -494,7 +518,7 @@ def permutation_null(rows, sims=30):
 if __name__ == "__main__":
     rows = load(sys.argv[1] if len(sys.argv) > 1 else "swaps_eth_usdc_5bp.csv")
     res = price(rows)
-    print(f"\nHINDSIGHT — counterfactual analysis on {len(rows):,} real Unichain mainnet swaps")
+    print(f"\nHINDSIGHT — counterfactual analysis on {len(res):,} real Unichain mainnet swaps")
     print("(a re-pricing of identical realized trades; no behavioural assumptions)")
     fees, claw = lvr_decomposition(res)
     revenue_matched(res, fees, claw)

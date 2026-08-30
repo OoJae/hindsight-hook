@@ -20,9 +20,29 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
+def _open(path):
+    """Open a backtest CSV, transparently accepting the committed .gz form.
+
+    The repo ships `swaps_*.csv.gz` (2.0MB) rather than the 7.6MB raw CSV, so a
+    fresh clone can reproduce every published number with no fetch step.
+    """
+    import gzip, os
+    if os.path.exists(path):
+        return open(path)
+    if os.path.exists(path + ".gz"):
+        return gzip.open(path + ".gz", "rt")
+    raise FileNotFoundError(
+        f"{path} (and {path}.gz) not found — run `python3 fetch.py` to rebuild it"
+    )
+
+
+
 # Hook default params (keep in sync with HindsightParams)
 BOND_BPS = 25
-N_SEC, W_SEC = 3, 2          # 15 + 10 flashblocks at 200ms
+N_SEC, W_SEC = 10, 5         # 50 + 25 flashblocks at 200ms — matches the live
+                             # deployment and compare.py. Section 8 of compare.py
+                             # shows the shorter 3+2s horizon does not beat a
+                             # random-label null (z=-1.68); 10+5s beats it by +4.5σ.
 THETA_MIN = 3.0              # ticks ≈ bps
 THETA_VOL_K = 2.8
 RAMP = 20.0
@@ -30,7 +50,7 @@ MAX_JUMP = 60.0              # per-observation contribution cap (matches the hoo
 USDC_DECIMALS = 1e6          # token1 = USDC
 
 def load(path):
-    with open(path) as f:
+    with _open(path) as f:
         rows = list(csv.DictReader(f))
     for r in rows:
         for k in ("block", "tick", "amount0", "amount1", "fee"):
