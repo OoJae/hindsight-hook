@@ -163,6 +163,22 @@ the result strengthens:
 
 ### 4. We tax information, not volatility
 
+It is not only a backtest result — it is visible in the live deployment. An 8-swap arb
+burst on Unichain Sepolia settled autonomously, and the verdicts split like this:
+
+| swap | markout | θ | verdict |
+|---|---|---|---|
+| #1–#5 | 22–27 ticks | **31** | refunded — the burst's own violence raised θ above its markout |
+| **#6** | 20 ticks | **3** | **forfeited** |
+| **#7** | 10 ticks | **3** | **forfeited** |
+| #8 | 0 ticks | 3 | refunded |
+
+Same trader, same direction, same size. During the loud part of the burst the threshold
+rises and the pool declines to confiscate; once the tape is quiet again and the price has
+*stayed* where the arb pushed it, that persistence is the informational signature and those
+trades forfeit. (Addresses and the on-chain reads are in `DEPLOYMENTS.md`.) The backtest
+below measures the same behaviour across 55,822 swaps:
+
 The threshold θ scales with short-horizon realized volatility, so a violent-but-uninformed
 tape does not get confiscated. To show that term is doing real work, we calibrate a *static*
 θ (4.0 ticks) to flag the same total number of swaps (12,010 vs 12,071) and compare what each

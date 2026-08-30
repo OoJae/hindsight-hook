@@ -59,9 +59,25 @@ guarantee it cannot confiscate an in-flight bond.
 **Live v4 proofs**
 - benign swap #0 settled **autonomously by the Reactive Network**, no manual action —
   status flipped to Refunded ~60s after the swap (10s maturity + 5s window + RSC latency)
-- carried forward from the identical v3 script: an 8-swap arb burst flags **#5 and #7**
-  toxic and forfeits them while the rest refund in full — the hardened classifier catches
-  **2×** what the pre-audit build caught and recaptures ~7× more value into the LP pot
+- the 8-swap arb burst (swaps #1–#8) settled **entirely autonomously**: within ~35s of the
+  last window closing, all 8 were resolved with no keeper run and no manual transaction.
+  The verdicts are the vol-scaled threshold visibly doing its job:
+
+  | swap | markout (ticks) | θ (ticks) | verdict |
+  |---|---|---|---|
+  | #1–#5 | 22–27 | **31** | refunded — the burst's *own* violence raised θ above its markout |
+  | **#6** | 20 | **3** | **forfeited** |
+  | **#7** | 10 | **3** | **forfeited** |
+  | #8 | 0 | 3 | refunded |
+
+  Read the θ column: during the loud part of the burst the threshold rises and the pool
+  declines to confiscate — that is "we tax information, not volatility" happening on-chain,
+  not in a backtest. By #6 the realized-vol EWMA has decayed to a quiet tape, and the price
+  has *stayed* where the arb pushed it. Persistent drift on a quiet tape is the
+  informational signature, and those are exactly the two trades that forfeit.
+- forfeits totalled **0.1242 dETH**, of which the epoch drip had already released about half
+  to in-range LPs by the time we read it (`pendingDonations` = 0.0457 remaining) — the
+  anti-JIT drip working live rather than lumping the whole pot into one flush
 - `sizeTierCap` configured on-chain (10e18), so the earned discount is actually enabled and
   the whale guard is real rather than nominal
 
