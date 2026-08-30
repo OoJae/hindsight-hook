@@ -48,7 +48,14 @@ The newest generation of defenses (priority-fee MEV taxes à la Angstrom L2 / Ba
 - **Markout** — signed post-trade drift in tick space (1 tick ≈ 1bp), measured against a **finalized** window: the verdict is a pure read; there is nothing to sandwich at settlement.
 - **θ = θ_min + k·σ** — the toxicity threshold breathes with realized volatility, so trending markets don't confiscate benign momentum flow. *We tax information, not volatility.*
 - **Bond** = 25bps of notional × reputation multiplier. New addresses pay full freight (discounts are **earned** through settled benign history — Sybil-proof); addresses caught extracting pay up to 3×; whales get no discount above a size tier (no reputation laundering).
-- **Forfeits drip** to LPs via `donate()` on an epoch schedule, which *bounds* JIT sniping rather than hand-waving it away: measured in `test/integration/LPSet.t.sol`, a JIT LP that adds matching liquidity, triggers the flush and exits captures **15% of the pot** (one epoch's release × its liquidity share), while a durable in-range LP earns **5.3× more** across the following epochs. A lump donation would have handed that sniper 100%.
+- **Forfeits drip** to LPs via `donate()` on an epoch schedule, which *bounds* the atomic
+  snipe rather than hand-waving it away: a JIT LP that adds, triggers one flush and exits can
+  take at most **one epoch's release — 50% of the pot** (15% at the specific liquidity ratios
+  in `test/integration/LPSet.t.sol`, and it scales with the JIT's share), where a lump
+  donation would have handed it 100%. The drip does not *penalise* a JIT that keeps coming
+  back — payout is proportional to liquidity-weighted presence at flush instants, so a JIT
+  that attends every flush earns what a durable LP earns. That is the honest characterisation:
+  the drip converts a single snipeable event into a stream you must keep showing up for.
 - **Missing data ⇒ refund** (withholding observations can never punish a trader), but **unsettled bonds auto-forfeit after a grace period** (waiting out the observation buffer is not an escape hatch).
 - Reverted transactions never land, never post bonds, never enter the measurement — the revert-spam attack that defeats ex-ante taxes simply does not apply.
 
@@ -67,82 +74,90 @@ The newest generation of defenses (priority-fee MEV taxes à la Angstrom L2 / Ba
 ## Sustainable liquidity, quantified — on real mainnet flow
 
 `backtest/` re-prices **7 days of real Unichain mainnet ETH/USDC swaps** (55,822 of them)
-under each mechanism. Every number below is a *re-pricing of identical realized trades* —
-no simulated agents, no behavioural assumptions. Reproduce with one command:
+under each mechanism. Every number is a *re-pricing of identical realized trades* — no
+simulated agents, no behavioural assumptions. Reproduce in one command:
 `cd backtest && .venv/bin/python compare.py`.
 
-### 1. How much of the bleeding does it actually stop?
+### 0. We publish the null
+
+Before any headline: does the trade-direction signal actually carry information, or would
+*random* labels collect just as much? Flipping a swap's direction negates its markout, so we
+shuffle directions and re-run — everything else untouched.
+
+| horizon (N+W) | true clawback | random-label mean | z | beats |
+|---|---|---|---|---|
+| 1+1s | $654 | $960 | **−4.53** | 0/30 |
+| 3+2s | $1,071 | $1,187 | **−1.68** | 3/30 |
+| 5+2s | $1,576 | $1,503 | +0.92 | 25/30 |
+| **10+5s (shipped)** | **$2,338** | $1,980 | **+4.52** | **30/30** |
+| 30+10s | $4,028 | $3,171 | +9.45 | 30/30 |
+
+**At short horizons the mechanism does not beat chance** — the dominant post-swap signal
+there is a trade's own price impact, not information (large trades see price revert against
+them, so random labels can collect *more*). Informational drift only separates from impact
+at ~10s. We ship the horizon where the signal is real, and publish the null beside it. An
+earlier draft of this README quoted the 3+2s numbers; our own second-round audit caught it.
+
+### 1. How much of the bleeding does it stop?
 
 | | |
 |---|---|
 | LP fee income (status quo, 5 bps) | $6,690.77 |
-| Gross realized adverse selection | $2,758.00 |
-| Net LP markout P&L, ex-fees (the 5s LVR bleed) | −$525.54 |
-| **Hindsight clawback** | **$1,071.39** (net of keeper tips: $1,017.82 to LPs) |
-| **ρ = clawback ÷ realized adverse selection** | **38.8%** |
-| **clawback ÷ net LVR bleed** | **2.0×** |
+| Post-swap drift in the trade's direction (gross positive) | $5,001.53 |
+| Net LP markout P&L, ex-fees (the 15s LVR bleed) | −$2,186.54 |
+| **Hindsight clawback** | **$2,337.72** (net of keeper tips: **$2,220.83** to LPs) |
+| **ρ = clawback ÷ gross positive markout** | **46.7%** |
 
-**Hindsight recovers 39% of the adverse selection LPs actually suffered — twice the pool's
-entire net 5-second LVR bleed.**
+ρ is deliberately measured against *gross* adverse selection, not net: the mechanism prices
+each trade's own informational cost and does not credit an informed trader for the
+favourable markout that uninformed flow happened to hand back. Netting the two is exactly
+the pooling this hook exists to undo — but the gross/net split is in the table so you can
+judge that choice yourself.
 
-### 2. Same LP revenue — who pays it? (the whole thesis, measured)
+### 2. Same LP revenue — who pays it?
 
-Calibrate a volatility-scaled dynamic fee to raise *exactly* the revenue Hindsight raises
-on the same flow, and ask who hands over the incremental money:
+Calibrate a volatility-scaled dynamic fee to raise *exactly* the revenue Hindsight raises on
+the same flow, then ask who hands over the incremental money:
 
-| mechanism | benign flow pays | toxic flow pays | share of incremental revenue from **benign** flow |
+| mechanism | benign pays | toxic pays | incremental revenue from **benign** flow |
 |---|---|---|---|
-| Flat fee (5.80 bps) | 5.80 bps | 5.80 bps | **87.1%** |
-| Volatility-scaled dynamic fee (5 + 2.875·σ) | 5.68 bps | 5.76 bps | **83.0%** |
-| **Hindsight** | **5.00 bps** | **10.29 bps** | **0.0%** |
+| Flat fee (6.75 bps) | 6.75 bps | 6.75 bps | **75.7%** |
+| Volatility-scaled dynamic fee (5 + 4.22·σ) | 6.58 bps | 6.64 bps | **71.9%** |
+| **Hindsight** | **5.00 bps** | **11.05 bps** | **0.0%** |
 
-The dynamic fee charges toxic flow **5.76 bps** and benign flow **5.68 bps** — a 1.4% gap.
-It cannot tell them apart. Hindsight charges **10.29 vs 5.00** — a 106% gap, with every
-benign bond refunded in full. This is the organizers' own framing of the problem
-("a dynamic fee can't tell the difference between a retail trader and a bot") turned into
-a measurement. ![who pays](backtest/chart_who_pays.png)
+The dynamic fee charges toxic flow 6.64 bps and benign flow 6.58 bps — a 0.9% gap. It
+cannot tell them apart. Hindsight charges 11.05 vs 5.00, with every benign bond refunded in
+full. ![who pays](backtest/chart_who_pays.png)
 
-### 3. We tax information, not volatility
+### 3. Two obvious objections, answered with data
 
-Calibrate a *static* threshold to flag the same number of swaps, then bucket by realized-
-volatility decile. In the most volatile decile the static threshold confiscates **2.3×**
-more flow; the volatility-scaled threshold spares volatile-but-uninformed traders while
-catching *more* in the quiet deciles, where a price move really does imply information.
-![vol decile](backtest/chart_vol_decile.png)
-
-### 4. Two obvious objections, answered with data
-
-**"Isn't this circular — you define 'toxic', then score competitors against your own labels?"**
-Fair question, so here is the same comparison with **no labels at all**: the correlation between
-what each mechanism *charges* a swap and the *realized harm* that swap caused (its markout).
+**"Circular — you define 'toxic', then grade competitors against your own labels."** So here
+is the same comparison with **no labels at all**: the correlation between what a mechanism
+*charges* and the *realized harm* a trade caused. The competitor is steelmanned with a
+**trailing** 120s volatility signal — what a hook can actually read in `beforeSwap` — because
+Hindsight's own θ uses the forward window only by virtue of pricing at `settle()`, after that
+window closes. That asymmetry *is* the mechanism.
 
 | mechanism | Pearson | Spearman |
 |---|---|---|
-| **Hindsight** | **0.654** | **0.417** |
-| revenue-matched dynamic fee | 0.016 | 0.282 |
-| revenue-matched flat fee | 0.000 | 0.197 |
+| **Hindsight** | **0.607** | **0.563** |
+| dynamic fee (trailing vol — fair ex-ante signal) | 0.066 | 0.032 |
+| flat fee | 0.000 | 0.074 |
 
-A fee that actually targets informed flow should track realized markout. Hindsight does;
-the dynamic fee is statistically indistinguishable from charging at random.
+**"Just one bot on a thin tape?"** The top address is half the dataset, so we removed it —
+the result strengthens:
 
-**"Is this just one bot dominating a thin tape?"** The top address is half the dataset — so
-we removed it. The result gets *stronger*:
-
-| sample | ρ | dynamic fee's take from benign flow |
+| sample | ρ | dynamic fee's take from benign |
 |---|---|---|
-| all 55,822 swaps | 38.8% | 83.0% |
-| excluding top sender (n=27,920) | **41.5%** | 81.8% |
-| excluding top-3 senders (n=12,128) | **51.2%** | 87.3% |
+| all 55,822 swaps | 46.7% | 71.9% |
+| excluding top sender (n=27,920) | **48.3%** | 71.7% |
+| excluding top-3 (n=12,128) | **53.5%** | 78.6% |
 
-### 5. Not tuned to a lucky window
+### 4. Not tuned to a lucky window
 
-ρ stays in a **39–59% band across a 60× range of settlement horizons** (1s → 80s), and the
-k × θ_min sensitivity grid is smooth and monotone with no cliffs. Honest note: θ_min
-dominates k on this tape (θ_min 3→12 ticks cuts the clawback ~70%; k 1.5→6.0 cuts it ~23%)
-— §3 above is where the k term earns its keep. ![horizon](backtest/chart_horizon.png)
-
-Plus the worked example from the mechanism design: a benign trader pays **$50 per $100k
-swap** vs $300 on a 30 bps pool.
+ρ moves 42.5% → 58.6% across a 60× horizon range and the k × θ_min sensitivity grid is
+smooth and monotone with no cliffs. Honest note: θ_min dominates k on this tape — §3 above is
+where the k term earns its keep. ![horizon](backtest/chart_horizon.png)
 
 ## Partner integrations
 

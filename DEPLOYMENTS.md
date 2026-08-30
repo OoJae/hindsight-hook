@@ -22,10 +22,19 @@ factory).
 | PoolSwapTest router | `0x2B1CcA9D8AAf82Ec4cF8E3A23cA5Ca323741E8eD` |
 | PoolModifyLiquidityTest | `0xFff4EaAFBe82801B8A8eA11BE27184439a57B67E` |
 | Pool (5bps, ts=10) | poolId `0xcb25338a48454517a0bab70a8f1929ab043294f3aa57f34ff1f6dd9950194015` |
+| Settlement horizon (live) | maturity **50** + window **25** flashblocks (~10s + 5s) |
 | HindsightCallback v3 (Reactive dest) | `0x0caa8dE2A2aE4565987C0203B81aaB47D1cc70E6` |
 | Clock: official FlashblockNumber | `0x056466f1a50a6B5e4DCCF106074ee0083D721a42` (live, 200ms) |
 | Reactive callback proxy | `0x9299472A6399Fd1027ebF067571Eb3e3D7837FC4` |
 | Owner (admin, 2-step transferable) | `0x5d4E95E57cf3369E31E6a50D7C4fECB04177226f` |
+
+**Parameter update (Aug 30):** both pools were retuned live from a 3s+2s to a **10s+5s**
+settlement horizon via the bounded `setParams` — no redeploy. Reason: our round-2 audit's
+permutation null showed the shorter horizon does not beat random-label chance (z = −1.68),
+because sub-5s post-swap drift is dominated by a trade's own price impact rather than
+information. At 10s+5s the true labels beat the null by **+4.5σ**. This is also the first
+real exercise of the bounded-owner design: the retune was possible *because* the bounds
+guarantee it cannot confiscate an in-flight bond.
 
 **Live v3 proofs**
 - benign swap #0 settled **autonomously by the Reactive Network in ~24 seconds**, no manual action

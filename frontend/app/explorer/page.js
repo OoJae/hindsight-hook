@@ -30,7 +30,7 @@ export default function Explorer() {
   const [k, setK] = useState(2.8);
   const [ramp, setRamp] = useState(20);
   const [bondBps, setBondBps] = useState(25);
-  const [hz, setHz] = useState(1); // 3+2s == the deployed hook (N=15,W=10 flashblocks)
+  const [hz, setHz] = useState(3); // 10+5s == the deployed hook (N=50,W=25 flashblocks)
 
   useEffect(() => {
     const base = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
@@ -100,8 +100,8 @@ export default function Explorer() {
     };
   }, [data, thetaMin, k, ramp, bondBps, hz]);
 
-  const reset = () => { setThetaMin(3); setK(2.8); setRamp(20); setBondBps(25); setHz(1); };
-  const isDefault = thetaMin === 3 && k === 2.8 && ramp === 20 && bondBps === 25 && hz === 1;
+  const reset = () => { setThetaMin(3); setK(2.8); setRamp(20); setBondBps(25); setHz(3); };
+  const isDefault = thetaMin === 3 && k === 2.8 && ramp === 20 && bondBps === 25 && hz === 3;
 
   if (err) return <div className="card">Failed to load dataset: {err}</div>;
   if (!stats) return <div className="card">Loading 55,822 real mainnet swaps…</div>;
@@ -178,8 +178,8 @@ export default function Explorer() {
         <ul className="muted" style={{ marginBottom: 0 }}>
           <li><b>Set k = 0</b> — a static threshold. ρ barely moves, but the mechanism starts
             confiscating volatile-but-uninformed flow (that's what the vol-decile chart measures).</li>
-          <li><b>Sweep the horizon</b> — ρ stays in a tight band across a 60× range. The result
-            is not an artifact of the 5-second window we ship.</li>
+          <li><b>Shorten the horizon</b> — at 3+2s the mechanism stops beating a random-label
+            null (see §0 of the README). That is why we ship 10+5s, and why we publish the null.</li>
           <li><b>Raise the bond</b> — clawback scales, but benign flow still pays exactly the
             headline fee, because benign bonds are refunded in full. That is the whole point:
             the bond is a deposit, not a fee.</li>

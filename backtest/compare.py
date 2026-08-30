@@ -18,7 +18,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 BOND_BPS = 25
-N_SEC, W_SEC = 3, 2
+N_SEC, W_SEC = 10, 5   # see the permutation null in section 8: at 3+2s the
+                       # signal is not separable from chance; at 10+5s it is (z=+4.4)
 THETA_MIN = 3.0
 THETA_K = 2.8
 RAMP = 20.0
@@ -56,10 +57,32 @@ def window(rows, i, start, end):
     return w / dur, (sum(jumps) / len(jumps) if jumps else 0.0)
 
 
+def trailing_vols(rows, lookback=120):
+    """Backward-looking mean |tick jump| over the previous `lookback` seconds.
+
+    This is what a dynamic-fee hook can ACTUALLY read in beforeSwap. Our own theta uses the
+    forward settlement window because Hindsight prices at settle(), after that window closes
+    — that asymmetry IS the mechanism, so the competitor must be given a fair ex-ante signal.
+    """
+    import bisect
+    blocks = [r["block"] for r in rows]
+    jumps = [0.0] + [min(abs(rows[i]["tick"] - rows[i - 1]["tick"]), MAX_JUMP) for i in range(1, len(rows))]
+    pref = [0.0] * (len(jumps) + 1)
+    for i, j in enumerate(jumps):
+        pref[i + 1] = pref[i] + j
+    out = []
+    for i, r in enumerate(rows):
+        lo = bisect.bisect_left(blocks, r["block"] - lookback)
+        n = i - lo
+        out.append((pref[i] - pref[lo]) / n if n > 0 else 0.0)
+    return out
+
+
 def price(rows, n_sec=N_SEC, w_sec=W_SEC, theta_min=THETA_MIN, k=THETA_K, ramp=RAMP,
           bond_bps=BOND_BPS, static_theta=None):
     """Re-price every swap. Returns per-swap dicts."""
     last = rows[-1]["block"]
+    tvol = trailing_vols(rows)
     out = []
     for i, s in enumerate(rows):
         if s["block"] + n_sec + w_sec > last:
@@ -75,7 +98,7 @@ def price(rows, n_sec=N_SEC, w_sec=W_SEC, theta_min=THETA_MIN, k=THETA_K, ramp=R
         theta = static_theta if static_theta is not None else theta_min + k * vol
         f = max(0.0, min(1.0, (markout - theta) / ramp))
         bond = usd * bond_bps / 1e4
-        out.append(dict(usd=usd, markout=markout, vol=vol, theta=theta,
+        out.append(dict(usd=usd, markout=markout, vol=vol, tvol=tvol[i], theta=theta,
                         fee=usd * s["fee"] / 1e6, forfeit=bond * f, toxic=f > 0,
                         sender=s["sender"]))
     return out
@@ -360,9 +383,18 @@ def corr_test(res):
     flat = target / sum(r["usd"] for r in res) * 1e4
 
     mk = [r["markout"] for r in res]
+    # Steelman: give the competitor a TRAILING vol signal it could actually read in
+    # beforeSwap, not our forward-looking window.
+    lo2, hi2 = 0.0, 200.0
+    for _ in range(70):
+        ct = (lo2 + hi2) / 2
+        rev = sum(r["usd"] * (HEADLINE_FEE_BPS + ct * r["tvol"]) / 1e4 for r in res)
+        (lo2 := ct) if rev < target else (hi2 := ct)
+    ct = (lo2 + hi2) / 2
     series = {
         "Hindsight": [(r["fee"] + r["forfeit"]) / r["usd"] * 1e4 for r in res],
-        "dynamic fee (rev-matched)": [HEADLINE_FEE_BPS + c * r["vol"] for r in res],
+        "dynamic fee (trailing vol)": [HEADLINE_FEE_BPS + ct * r["tvol"] for r in res],
+        "dynamic fee (forward vol)": [HEADLINE_FEE_BPS + c * r["vol"] for r in res],
         "flat fee (rev-matched)": [flat] * len(res),
     }
     print(f"{'mechanism':>28}{'pearson':>10}{'spearman':>11}")
@@ -403,6 +435,40 @@ def concentration(rows, res):
     print("\n  The result strengthens when the busiest bots are removed — it is not an")
     print("  artifact of one address dominating the tape.")
 
+
+def permutation_null(rows, sims=30):
+    """Publish the null. Does the TRUE trade direction carry information, or would random
+    directions collect just as much? markout = +/- drift, so flipping a swap's direction
+    negates its markout; theta, vol, bond and ramp are untouched."""
+    import random
+    section("8. PERMUTATION NULL — is the signal real, or would random labels do as well?")
+    print(f"{'N,W (s)':>10}{'true claw':>12}{'flagged':>10}{'null mean':>12}{'z':>8}{'beats':>9}")
+    for (n, w) in [(1, 1), (3, 2), (5, 2), (10, 5), (30, 10)]:
+        res = price(rows, n_sec=n, w_sec=w)
+
+        def claw(flips):
+            t = 0.0; cnt = 0
+            for r, fl in zip(res, flips):
+                mk = -r["markout"] if fl else r["markout"]
+                f = max(0.0, min(1.0, (mk - r["theta"]) / RAMP))
+                if f > 0:
+                    cnt += 1; t += r["usd"] * (BOND_BPS / 1e4) * f
+            return t, cnt
+
+        true_c, true_n = claw([False] * len(res))
+        random.seed(4)
+        sims_v = [claw([random.random() < 0.5 for _ in res])[0] for _ in range(sims)]
+        mu, sd = statistics.mean(sims_v), statistics.pstdev(sims_v)
+        z = (true_c - mu) / sd if sd else 0.0
+        beat = sum(1 for x in sims_v if true_c > x)
+        tag = "  <- SHIPPED" if (n, w) == (N_SEC, W_SEC) else ""
+        print(f"{f'{n},{w}':>10}{money(true_c):>12}{true_n:>10,}{money(mu):>12}{z:>+8.2f}{f'{beat}/{sims}':>9}{tag}")
+    print()
+    print("  At very short horizons the dominant post-swap signal is a trade's own price impact,")
+    print("  not information: large trades see price revert against them, so RANDOM labels collect")
+    print("  MORE than true ones (z<0). Real informational drift only separates from that at ~10s+.")
+    print("  We ship the horizon where the signal is real and publish the null next to the number.")
+
 if __name__ == "__main__":
     rows = load(sys.argv[1] if len(sys.argv) > 1 else "swaps_eth_usdc_5bp.csv")
     res = price(rows)
@@ -415,6 +481,7 @@ if __name__ == "__main__":
     sensitivity(rows)
     corr_test(res)
     concentration(rows, res)
+    permutation_null(rows)
     section("CHARTS")
     chart_who_pays(res, fees, claw)
     chart_vol_decile(rows, res)

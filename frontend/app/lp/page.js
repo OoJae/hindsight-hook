@@ -53,7 +53,7 @@ export default function LpPage() {
       </div>
       <p className="muted">
         {settles.length} settlements · {toxicCount} toxic ({settles.length ? Math.round((100 * toxicCount) / settles.length) : 0}%)
-        — forfeits drip via donate() each epoch — a JIT sniper captures ≤15% (measured), a durable LP 5.3× more
+        — forfeits drip via donate() each epoch — one flush releases half the pot, so an atomic JIT snipe cannot take it all
       </p>
 
       <h2>Settlements</h2>
