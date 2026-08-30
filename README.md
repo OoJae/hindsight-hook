@@ -7,6 +7,8 @@
 Built for the **UHI10 Hookathon** (theme: *Sustainable Liquidity & MEV Protection*).
 
 **🔗 Live app (Unichain Sepolia): https://oojae.github.io/hindsight-hook/**
+**🔬 Interactive evidence: https://oojae.github.io/hindsight-hook/explorer/** — re-prices all
+55,822 real mainnet swaps *in your browser* under any parameters you choose. Try to break it.
 **Hook:** `0xeb77d98A9dfB72Fb17d196a3ec08F985bF0510c4` · all addresses in [`DEPLOYMENTS.md`](DEPLOYMENTS.md) — watch the real
 flashblock counter tick, get a bond quote, and see live settlements incl. an actual toxic
 forfeit. Connect any wallet on Unichain Sepolia to swap ("Mint demo tokens" gives you balance).

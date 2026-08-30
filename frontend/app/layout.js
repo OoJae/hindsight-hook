@@ -39,6 +39,7 @@ export default function RootLayout({ children }) {
           <Link href="/">Swap</Link>
           <Link href="/lp">LP dashboard</Link>
           <Link href="/toxicity">Toxicity</Link>
+          <Link href="/explorer">Explorer</Link>
           <span className="muted" style={{ marginLeft: "auto" }}>fees decided after the trade · Unichain Sepolia</span>
         </nav>
         <main>{children}</main>
