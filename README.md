@@ -250,7 +250,15 @@ smooth and monotone with no cliffs. Honest note: θ_min still dominates k on thi
 
 - **Reactive Network** — **live and verified end-to-end.** An RSC on Reactive Lasna (`src/integrations/reactive/HindsightReactive.sol`, deployed `0x324d3DA5f40A9D533fe8FfEa7252D7f4b348cE77`) subscribes to the hook's `SwapRecorded` events on Unichain Sepolia plus Cron sweep/flush topics, and drives settlement through the official callback proxy into `HindsightCallback` (`0xF6Dad7BB03a9cf89f4E3b98912Aea695F6b27227`). The current v4 deployment settles autonomously ~60s after the swap (10s maturity + 5s window + RSC latency); the first such settlement we captured a tx hash for was on the v1 bytecode, when the horizon was shorter: `0xacc2cf71beba00a94862f41aafe62d185fb93d30eabcc4d1c68db029d86b11c4` (29s). Settlement liveness without any operated infrastructure.
 
-- **Chainlink Automation** — `src/integrations/chainlink/HindsightUpkeep.sol` deployed on Base Sepolia (`0x45109C72ED596bBD3786A4C5F36Ae1f88872b206`) against a second, chain-identical hook deployment (`0xE07a6bb6657f1381e5665F7741DEc4d4eAC8dAc4`, running the hook's `block.number` fallback clock): three-mode conditional upkeep (settle/flush/poke), forwarder-gated, **three upkeeps registered programmatically against the live v2.3 registrar** (the web UI is deprecated to withdraw-only; we encoded the v2.3 `RegistrationParams` incl. `billingToken` by hand), auto-approved, LINK-funded, forwarders wired on-chain. This leg also proves the **fallback clock end-to-end on a chain with no flashblocks**: a live retail swap stamped at `461731830` (a `block.number × 10` stamp), `checkUpkeep(settle)` flipping false→true on-chain as the window closed, and `settle(0)` returning the full bond — tx `0x9984206868526b036a5e8bd6932063a2d3cbde1047fb01eef43cbd21b521796c`. Full transparency: Chainlink sunset classic-Automation testnet execution in mid-2026 and the Base Sepolia DON currently performs nothing for anyone (30h registry scan: zero `UpkeepPerformed` events) — so the perform path is proven by the fork suite executing the complete check→perform→refund cycle against the real Base Sepolia PoolManager (reproduce: `BASE_SEPOLIA_RPC_URL=<rpc> forge test --mc BaseSepoliaFork -vv`, ~13s; without an RPC the fork tests SKIP loudly rather than passing silently).
+- **Chainlink Automation** — `src/integrations/chainlink/HindsightUpkeep.sol` deployed on Base Sepolia (`0x45109C72ED596bBD3786A4C5F36Ae1f88872b206`) against a second, chain-identical hook deployment (`0xE07a6bb6657f1381e5665F7741DEc4d4eAC8dAc4`, running the hook's `block.number` fallback clock): three-mode conditional upkeep (settle/flush/poke), forwarder-gated, **three upkeeps registered programmatically against the live v2.3 registrar** (the web UI is deprecated to withdraw-only; we encoded the v2.3 `RegistrationParams` incl. `billingToken` by hand), auto-approved, LINK-funded, forwarders wired on-chain. This leg also proves the **fallback clock end-to-end on a chain with no flashblocks**: a live retail swap stamped at `461836920` (a `block.number x 10` stamp), `checkUpkeep(settle)` flipping false->true on-chain as the window closed, and `settle(0)` returning the full bond. Check it yourself against current state rather than taking a transaction hash on trust:
+
+```bash
+cast call 0xE07a6bb6657f1381e5665F7741DEc4d4eAC8dAc4 \
+  'getSwap(uint256)((address,uint48,bool,uint8,bytes32,uint128,uint128,bool,int24,bool,bool,int24,int24,uint16,uint16,int24))' \
+  0 --rpc-url https://sepolia.base.org
+# -> status 1 (refunded), and the frozen verdict tuple: fTheta 3, fMaturity 50, fWindow 25, fRamp 20
+```
+ Full transparency: Chainlink sunset classic-Automation testnet execution in mid-2026 and the Base Sepolia DON currently performs nothing for anyone (30h registry scan: zero `UpkeepPerformed` events) — so the perform path is proven by the fork suite executing the complete check→perform→refund cycle against the real Base Sepolia PoolManager (reproduce: `BASE_SEPOLIA_RPC_URL=<rpc> forge test --mc BaseSepoliaFork -vv`, ~13s; without an RPC the fork tests SKIP loudly rather than passing silently).
 
 See `DEPLOYMENTS.md` for all addresses and proof transactions.
 
@@ -288,10 +296,12 @@ test/
 
 ## Run it
 
-Measured steady-state gas (`forge test --mt test_gas_numbers -vv`): swap incl. hook + test
-router ≈ 224k, settle refund ≈ 41k, settle forfeit incl. the donation drip ≈ 219k, poke ≈ 29k
+Measured steady-state gas at `optimizer_runs = 50` (`forge test --mt test_gas_numbers -vv`): swap incl. hook + test
+router ≈ 233k, settle refund ≈ 43k, settle forfeit incl. the donation drip ≈ 202k, poke ≈ 29k
 — cents on an L2. (Measured after warm-up, so one-time funding/cold-storage costs are not
-billed to them.)
+billed to them.) `optimizer_runs` is 50 rather than 200 because the round-3 fixes left the hook
+**27 bytes** under the EIP-170 limit; that costs a few percent of runtime gas on the swap path
+and is the honest price of fitting them in.
 
 ```bash
 git clone https://github.com/OoJae/hindsight-hook && cd hindsight-hook
