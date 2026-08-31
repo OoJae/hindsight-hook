@@ -1,13 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import dynamic from "next/dynamic";
 import Link from "next/link";
-import { scrollProgress } from "./_components/scroll";
 import "./site.css";
-
-// output: "export" prerenders every page in Node at build time, which would
-// crash on a WebGL context. The canvas can only ever exist in the browser.
-const Ribbon = dynamic(() => import("./_components/Ribbon"), { ssr: false });
 
 /** The flashblock clock, ticking at Unichain's real 200ms cadence. */
 function Clock({ onClose }) {
@@ -66,10 +60,6 @@ function Verdict() {
 export default function Landing() {
   return (
     <>
-      <div className="stage" aria-hidden="true">
-        <Ribbon progressRef={scrollProgress} />
-      </div>
-
       {/* ---- act 0 — the hero withholds ---------------------------------- */}
       <section className="hero" data-reveal>
         <div className="hero-stamp">

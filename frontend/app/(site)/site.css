@@ -39,15 +39,6 @@
   .siteheader nav a:not(.cta) { display: none; }
 }
 
-/* The canvas sits behind everything and never scrolls. */
-.stage {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-}
-.stage canvas { display: block; }
-
 .hero,
 .band,
 .sitefooter { position: relative; z-index: 1; }

@@ -1,44 +1,17 @@
 "use client";
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
-import Lenis from "lenis";
-import { scrollProgress } from "./scroll";
 
-/** Smooth scroll + one-shot reveals, for every page under (site).
+/** One-shot reveals. Nothing else.
  *
- *  Deliberately not GSAP/ScrollTrigger: the JS budget is spent on WebGL, and a
- *  dozen scattered triggers is exactly the "scattered animation" failure mode.
- *  One scroller, one observer, one class.
+ *  There is deliberately no smooth-scroll library here. Lenis was hijacking the
+ *  scroll and fighting `scroll-behavior: smooth` in the stylesheet at the same
+ *  time, which made the page feel laggy and detached from the wheel. Native
+ *  scrolling is what people expect, and it is what this now uses.
  */
 export default function Motion() {
   const pathname = usePathname();
 
-  // Lenis is set up once and lives for the session.
-  useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      scrollProgress.current = 1;
-      return;
-    }
-    const lenis = new Lenis({ lerp: 0.1 });
-    let raf;
-    const loop = (t) => {
-      lenis.raf(t);
-      raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
-    const emit = ({ scroll, limit }) => {
-      scrollProgress.current = limit > 0 ? scroll / limit : 0;
-    };
-    lenis.on("scroll", emit);
-    return () => {
-      cancelAnimationFrame(raf);
-      lenis.off("scroll", emit);
-      lenis.destroy();
-    };
-  }, []);
-
-  // Reveals are re-scanned per route: the observer set up on one page cannot
-  // see the next page's nodes after a client-side navigation.
   useEffect(() => {
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const targets = document.querySelectorAll("[data-reveal]:not([data-shown])");
