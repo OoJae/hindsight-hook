@@ -119,7 +119,7 @@ contract AuditReproTest is HindsightFixture {
             advanceTo(pastWindow(vid));
             hook.settle(vid);
         }
-        assertEq(hook.benignSettles(victim), 3, "victim earned history");
+        assertEq(hook.benignSettles(poolId, victim), 3, "victim earned history");
 
         // ATTACKER swaps (tx.origin = attacker) but names the VICTIM in hookData.
         fundTrader(attacker);
@@ -139,8 +139,8 @@ contract AuditReproTest is HindsightFixture {
         advanceTo(pastWindow(aid));
         hook.settle(aid);
 
-        assertEq(hook.benignSettles(victim), 3, "M5: third party must not wipe victim history");
-        assertEq(hook.toxicityScore(victim), 0, "M5: third party must not poison victim score");
+        assertEq(hook.benignSettles(poolId, victim), 3, "M5: third party must not wipe victim history");
+        assertEq(hook.toxicityScore(poolId, victim), 0, "M5: third party must not poison victim score");
     }
 
     /// Unauthenticated attribution must also be unable to BORROW a discount: it pays the

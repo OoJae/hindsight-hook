@@ -149,6 +149,23 @@ library ObservationLib {
         meanJumpTicks = sumAbs / nJumps;
     }
 
+    /// @notice Volatility-scaled toxicity threshold, computed entirely inside the library.
+    /// @dev Lives here rather than in the hook for two reasons. It saves the hook an external
+    ///      call (it used to call `avgAbsJump` and then do the arithmetic itself), and the
+    ///      hook is 200 bytes from the EIP-170 limit. Integer division twice, exactly as the
+    ///      hook did it — the backtest was corrected to match this, not the other way round.
+    function theta(
+        Buffer storage self,
+        uint48 from,
+        uint48 to,
+        int24 maxJumpTicks,
+        int24 thetaMinTicks,
+        uint16 thetaVolMultX10
+    ) public view returns (int256) {
+        (uint256 vol,) = avgAbsJump(self, from, to, maxJumpTicks);
+        return int256(uint256(int256(thetaMinTicks))) + int256(vol * thetaVolMultX10 / 10);
+    }
+
     /// @notice Newest stamp ≤ `at` exists? Used to check data coverage.
 
     /// @notice Oldest retained observation. Used to tell "we never had data for this window"

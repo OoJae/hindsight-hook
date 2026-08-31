@@ -39,6 +39,7 @@ contract HindsightFixture is Test, Deployers {
             uint160(
                 Hooks.AFTER_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
                     | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG
+                    | Hooks.BEFORE_ADD_LIQUIDITY_FLAG | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
             ) ^ (0x4444 << 144)
         );
         deployCodeTo(

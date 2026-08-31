@@ -56,6 +56,7 @@ contract UnichainSepoliaFork is Test {
             uint160(
                 Hooks.AFTER_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
                     | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG
+                    | Hooks.BEFORE_ADD_LIQUIDITY_FLAG | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
             ) ^ (0x4444 << 144)
         );
         deployCodeTo(
@@ -159,7 +160,7 @@ contract UnichainSepoliaFork is Test {
         uint128 bond = hook.getSwap(0).bond;
         assertGt(uint256(bond), 0, "bond escrowed on real PoolManager");
 
-        _advanceFlashblocks(26); // past N + W
+        _advanceFlashblocks(76); // past N + W
         uint256 before = t1.balanceOf(TRADER);
         hook.settle(0);
         assertEq(t1.balanceOf(TRADER) - before, uint256(bond), "benign refund on fork");
@@ -169,12 +170,14 @@ contract UnichainSepoliaFork is Test {
         _swap(TRADER, true, -1e18);
         uint128 bond = hook.getSwap(0).bond;
 
-        // sustained directional drift through the settlement window
-        for (uint256 i; i < 20; i++) {
+        // Sustained directional drift through the settlement window, which now opens at
+        // exec+50 and closes at exec+75.
+        _advanceFlashblocks(50);
+        for (uint256 i; i < 24; i++) {
             _advanceFlashblocks(1);
             _swap(address(0xD41F7), true, -30e18);
         }
-        _advanceFlashblocks(10);
+        _advanceFlashblocks(5);
 
         uint256 before = t1.balanceOf(TRADER);
         hook.settle(0);

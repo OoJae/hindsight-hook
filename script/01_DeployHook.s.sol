@@ -21,6 +21,7 @@ contract DeployHook is Script {
         uint160 flags = uint160(
             Hooks.AFTER_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
                 | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG
+                | Hooks.BEFORE_ADD_LIQUIDITY_FLAG | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
         );
         address hookOwner = vm.addr(pk);
         bytes memory ctorArgs =

@@ -26,7 +26,7 @@ contract ReputationTest is HindsightFixture {
 
         uint256 quoteAfter = hook.previewBond(poolId, HONEST, 1e18);
         assertLt(quoteAfter, quoteBefore, "benign history reduces the bond");
-        assertEq(hook.benignSettles(HONEST), 3);
+        assertEq(hook.benignSettles(poolId, HONEST), 3);
         // 3 settles x 3% discount
         assertApproxEqRel(quoteAfter, quoteBefore * 91 / 100, 0.001e18);
     }
@@ -39,7 +39,7 @@ contract ReputationTest is HindsightFixture {
             advanceTo(pastWindow(id));
             hook.settle(id);
         }
-        assertEq(hook.benignSettles(SHARK), 3);
+        assertEq(hook.benignSettles(poolId, SHARK), 3);
 
         // Then get caught being toxic.
         uint256 toxicId = hook.nextSwapId();
@@ -48,8 +48,8 @@ contract ReputationTest is HindsightFixture {
         advanceTo(pastWindow(toxicId));
         hook.settle(toxicId);
 
-        assertEq(hook.benignSettles(SHARK), 0, "discount history wiped");
-        assertGt(hook.toxicityScore(SHARK), 0, "EMA raised");
+        assertEq(hook.benignSettles(poolId, SHARK), 0, "discount history wiped");
+        assertGt(hook.toxicityScore(poolId, SHARK), 0, "EMA raised");
         uint256 quote = hook.previewBond(poolId, SHARK, 1e18);
         assertGt(quote, 1e18 * 25 / 10_000, "penalty multiplier above base");
     }

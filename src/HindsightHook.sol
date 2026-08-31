@@ -11,7 +11,7 @@ import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
-import {SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
+import {SwapParams, ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 
@@ -78,6 +78,9 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     );
     event DonationFlushed(PoolId indexed poolId, uint128 amount0, uint128 amount1);
     event TrustedRouterSet(address indexed router, bool trusted);
+    /// @notice A refund could not be pushed as tokens, so it was issued as ERC-6909 claims.
+    event RefundAsClaims(uint256 indexed swapId, address indexed trader, uint128 amount);
+
     event OwnershipTransferStarted(address indexed from, address indexed to);
     event OwnershipTransferred(address indexed from, address indexed to);
 
@@ -136,7 +139,12 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     mapping(uint256 => SwapRecord) internal swaps;
 
     // Reputation (per-address EMA of toxic markout). WAD-scaled ticks.
-    mapping(address => uint256) public toxicityScore;
+    /// @dev Keyed by pool as well as address. Global reputation was farmable: anyone can
+    ///      permissionlessly initialise a pool against this hook, mint their own tokens, be
+    ///      its sole LP, and settle 30 dust swaps benign on a tape they control — then spend
+    ///      the earned 10x discount on a real pool. Round-3 finding F. Cross-pool portable
+    ///      reputation stays on the roadmap, but it needs attestation, not an open mapping.
+    mapping(PoolId => mapping(address => uint256)) public toxicityScore;
 
     /// @notice Routers that faithfully report their caller via IMsgSender. Only these may
     ///         attribute a swap to a third party (see `_resolveTrader`).
@@ -150,6 +158,23 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     ///      a new field would change the setParams selector, grow two public getters and
     ///      break the positional poolParams destructures, for a value we do not tune live.
     uint48 internal constant THETA_VOL_LOOKBACK_STAMPS = 600;
+    /// @dev Fraction of the forfeit pot released per epoch. The spec says ~50; the code said
+    ///      2 until round 3, which is why a JIT could take 98% of a pot in twelve flushes.
+    uint128 internal constant DRIP_DENOM = 50;
+    /// @dev Minimum stamps a liquidity position must be held before it can be removed.
+    ///      300 stamps = 60s at 200ms flashblocks. The forfeit drip pays whoever is in range
+    ///      when `flushDonations` fires, and that call is permissionless with a publicly
+    ///      readable epoch gate — so without this an attacker adds liquidity, flushes,
+    ///      and exits atomically, capturing the clawback that belongs to the LPs who
+    ///      actually bore the adverse selection. Measured before the fix: a JIT with 1/7 of
+    ///      the incumbent's capital took 98% of the pot, and a toxic trader recaptured 98%
+    ///      of their own forfeit. Requiring residency makes the capital non-atomic: the
+    ///      sniper must hold the position across the window and wear the inventory risk,
+    ///      which is exactly what being a durable LP means. (Round-3 finding E.)
+    ///
+    ///      Cost, stated plainly: this constrains honest LPs too. Add-and-remove in one
+    ///      transaction no longer works against this hook.
+    uint48 internal constant LP_RESIDENCY_STAMPS = 300;
     uint256 internal constant EMA_LAMBDA_WAD = 0.9e18;
     uint256 public constant MULT_M0_WAD = 1e18;      // unknown addresses pay full bond (Sybil-proof)
     uint256 internal constant MULT_SLOPE_WAD = 0.02e18; // +0.02x per WAD-tick of score
@@ -157,7 +182,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     uint256 internal constant MULT_MAX_WAD = 3e18;
 
     // Benign-history discount: addresses earn m < 1 only through settled benign flow.
-    mapping(address => uint32) public benignSettles;
+    mapping(PoolId => mapping(address => uint32)) public benignSettles;
     uint256 internal constant DISCOUNT_PER_SETTLE_WAD = 0.03e18; // −3% bond per benign settle
     uint256 internal constant DISCOUNT_FLOOR_WAD = 0.1e18;
 
@@ -168,6 +193,16 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     }
 
     mapping(PoolId => PendingDonation) public pendingDonations;
+
+    /// @notice Stamp at which this address last added liquidity to this pool.
+    /// @dev Keyed on the position OWNER rather than the full position key. Coarser — adding
+    ///      to one range restarts the clock on that address's other ranges — but it costs no
+    ///      hash and no calldata encode, and the hook has under 400 bytes of EIP-170 room.
+    ///      It blocks the attack either way, because the JIT snipe is add-then-remove by one
+    ///      address inside one epoch.
+    mapping(PoolId => mapping(address => uint48)) internal lpAddStamp;
+
+    error TooSoonToRemove();
 
     // ────────────────────────────────── lifecycle ──────────────────────────────────
     /// @param _owner explicit owner. NOT `msg.sender`: hooks are deployed through the CREATE2
@@ -191,9 +226,9 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         return Hooks.Permissions({
             beforeInitialize: false,
             afterInitialize: true,
-            beforeAddLiquidity: false,
+            beforeAddLiquidity: true,
             afterAddLiquidity: false,
-            beforeRemoveLiquidity: false,
+            beforeRemoveLiquidity: true,
             afterRemoveLiquidity: false,
             beforeSwap: true,
             afterSwap: true,
@@ -237,6 +272,38 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         poolParams[id] = _defaultParams();
         observations[id].write(currentStamp(), tick);
         return this.afterInitialize.selector;
+    }
+
+    /// @dev Records when a position was last added to, so `_beforeRemoveLiquidity` can
+    ///      enforce residency. Keyed on the caller (the router that owns the position in the
+    ///      PoolManager) plus the range and salt.
+    function _beforeAddLiquidity(
+        address sender,
+        PoolKey calldata key,
+        ModifyLiquidityParams calldata,
+        bytes calldata
+    ) internal override returns (bytes4) {
+        lpAddStamp[key.toId()][sender] = currentStamp();
+        return this.beforeAddLiquidity.selector;
+    }
+
+    /// @dev The forfeit clawback is paid to whoever is in range when the drip fires, and the
+    ///      drip is permissionless on a readable epoch gate. Residency is what stops that
+    ///      being a bearer instrument: a sniper must hold the position, and the adverse
+    ///      selection that comes with it, rather than flashing it in and out around a flush.
+    function _beforeRemoveLiquidity(
+        address sender,
+        PoolKey calldata key,
+        ModifyLiquidityParams calldata params,
+        bytes calldata
+    ) internal override returns (bytes4) {
+        // v4 routes a zero delta here too — that is how fees are collected. Collecting fees
+        // must never be gated; only an actual withdrawal is.
+        if (params.liquidityDelta < 0) {
+            uint48 added = lpAddStamp[key.toId()][sender];
+            if (added != 0 && currentStamp() < added + LP_RESIDENCY_STAMPS) revert TooSoonToRemove();
+        }
+        return this.beforeRemoveLiquidity.selector;
     }
 
     function _beforeSwap(address, PoolKey calldata key, SwapParams calldata, bytes calldata)
@@ -302,7 +369,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         bond = BondMathLib.bond(
             absUnspec,
             p.bondBps,
-            attributed ? _bondMultiplier(trader, p.sizeTierCap) : MULT_M0_WAD,
+            attributed ? _bondMultiplier(id, trader, p.sizeTierCap) : MULT_M0_WAD,
             p.sizeTierCap,
             _bondCap(id, isCurrency0, p.thetaMinTicks)
         );
@@ -565,9 +632,9 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         returns (int256)
     {
         uint48 from = execStamp > THETA_VOL_LOOKBACK_STAMPS ? execStamp - THETA_VOL_LOOKBACK_STAMPS : 0;
-        uint48 to = execStamp > 0 ? execStamp - 1 : 0;
-        (uint256 vol,) = observations[id].avgAbsJump(from, to, MAX_VOL_JUMP_TICKS);
-        return int256(uint256(int256(p.thetaMinTicks))) + int256(vol * p.thetaVolMultX10 / 10);
+        return observations[id].theta(
+            from, execStamp > 0 ? execStamp - 1 : 0, MAX_VOL_JUMP_TICKS, p.thetaMinTicks, p.thetaVolMultX10
+        );
     }
 
     function unlockCallback(bytes calldata data) external returns (bytes memory) {
@@ -603,7 +670,20 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         poolManager.burn(address(this), c.toId(), r.bond);
 
         // ...then route it: refund → trader, tip → keeper, forfeit → LP donation pot.
-        if (refund > 0) poolManager.take(c, r.trader, refund);
+        if (refund > 0) {
+            // A push transfer lets the token decide whether this record retires. If the
+            // currency reverts on transfer to this trader, the swap can never leave status 0:
+            // `pendingMatured` keeps returning it, `settleBatch` keeps settling nothing, and
+            // both automation cursors — which break at the first pending id — stall behind it
+            // permanently, starving every honest swap after it. There is no admin recovery.
+            // So fall back to ERC-6909 claims, which cannot fail: the value is the trader's
+            // either way, and the record always retires. (Round-3 finding D.)
+            try poolManager.take(c, r.trader, refund) {}
+            catch {
+                poolManager.mint(r.trader, c.toId(), refund);
+                emit RefundAsClaims(s.swapId, r.trader, refund);
+            }
+        }
         if (tip > 0) poolManager.take(c, s.keeper, tip);
         if (donation > 0) {
             // Stash and drip (anti JIT-donation-sniping, spec E2). Taking to ourselves
@@ -629,8 +709,8 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         if (poolManager.getLiquidity(id) == 0) return; // Pool.donate reverts with no liquidity
 
         // Drip half the pot per epoch → exponential smoothing.
-        uint128 d0 = pd.amount0 / 2;
-        uint128 d1 = pd.amount1 / 2;
+        uint128 d0 = pd.amount0 / DRIP_DENOM;
+        uint128 d1 = pd.amount1 / DRIP_DENOM;
         // flush fully once the pot is dust
         if (pd.amount0 > 0 && d0 == 0) d0 = pd.amount0;
         if (pd.amount1 > 0 && d1 == 0) d1 = pd.amount1;
@@ -699,6 +779,9 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     ///      uncapped bond deliberately: a range-exiting fill realizes maximal price
     ///      movement (maximal markout exposure), and capping it against zero edge
     ///      liquidity would let toxic flow dodge bonds by overshooting the range.
+    /// @notice Manipulation-cost bond cap (spec A3): never escrow more than it costs an
+    ///         attacker to move the settlement TWAP by the toxicity threshold.
+    /// @dev Returns 0 (= no cap in BondMathLib) when active liquidity is zero.
     function _bondCap(PoolId id, bool isCurrency0, int24 thetaMinTicks)
         internal
         view
@@ -718,13 +801,13 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     ///      `sizeTierCap` (the whale guard). With the safe default of 0 the discount is off
     ///      entirely and only penalties apply — so "no reputation laundering" holds by
     ///      construction rather than by configuration.
-    function _bondMultiplier(address trader, uint128 sizeTierCap) internal view returns (uint256 m) {
+    function _bondMultiplier(PoolId id, address trader, uint128 sizeTierCap) internal view returns (uint256 m) {
         m = ToxicityLib.multiplier(
-            toxicityScore[trader], MULT_M0_WAD, MULT_SLOPE_WAD, MULT_MIN_WAD, MULT_MAX_WAD
+            toxicityScore[id][trader], MULT_M0_WAD, MULT_SLOPE_WAD, MULT_MIN_WAD, MULT_MAX_WAD
         );
         // Earned benign-history discount (only applies when no toxicity penalty is active).
         if (m == MULT_M0_WAD && sizeTierCap != 0) {
-            uint256 discount = uint256(benignSettles[trader]) * DISCOUNT_PER_SETTLE_WAD;
+            uint256 discount = uint256(benignSettles[id][trader]) * DISCOUNT_PER_SETTLE_WAD;
             uint256 floor_ = DISCOUNT_FLOOR_WAD;
             m = discount + floor_ >= MULT_M0_WAD ? floor_ : MULT_M0_WAD - discount;
         }
@@ -747,20 +830,21 @@ contract HindsightHook is BaseHook, IUnlockCallback {
     ) internal {
         address trader = r.trader;
         int24 rampTicks = r.fRamp;
+        PoolId id = r.poolId;
         uint256 raw = 0;
         if (toxic) {
             raw = (graded && markoutTicks > thetaTicks)
                 ? uint256(markoutTicks - thetaTicks)
                 : uint256(uint24(rampTicks));
-            benignSettles[trader] = 0; // ANY forfeiture resets the earned discount
+            benignSettles[id][trader] = 0; // ANY forfeiture resets the earned discount
         } else if (graded) {
             unchecked {
-                if (benignSettles[trader] < type(uint32).max) benignSettles[trader]++;
+                if (benignSettles[id][trader] < type(uint32).max) benignSettles[id][trader]++;
             }
         } else {
             return; // ungraded refund: fully neutral
         }
-        toxicityScore[trader] = ToxicityLib.update(toxicityScore[trader], raw, EMA_LAMBDA_WAD);
+        toxicityScore[id][trader] = ToxicityLib.update(toxicityScore[id][trader], raw, EMA_LAMBDA_WAD);
     }
 
     /// @notice Resolve the bond's beneficiary and whether that attribution is trustworthy.
@@ -881,7 +965,7 @@ contract HindsightHook is BaseHook, IUnlockCallback {
         uint256 cap1 = _bondCap(id, false, p.thetaMinTicks);
         uint256 cap = cap0 < cap1 ? cap0 : cap1;
         return BondMathLib.bond(
-            unspecifiedAmount, p.bondBps, _bondMultiplier(trader, p.sizeTierCap), p.sizeTierCap, cap
+            unspecifiedAmount, p.bondBps, _bondMultiplier(id, trader, p.sizeTierCap), p.sizeTierCap, cap
         );
     }
 

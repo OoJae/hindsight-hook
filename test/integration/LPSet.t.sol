@@ -59,58 +59,78 @@ contract LPSetTest is HindsightFixture {
     /// THE BOUND: a JIT LP that adds liquidity, triggers the flush, and exits immediately
     /// captures only its pro-rata share of ONE epoch's drip — not the whole pot.
     /// This replaces the absolute "JIT-snipe-proof" claim with a measured number.
-    function test_jit_capture_is_bounded_by_the_drip() public {
+    /// Round-3 finding E. The previous version of this test asserted the JIT's take was
+    /// BOUNDED (< half the pot, measured ~15%) and treated that as the defence. It was not:
+    /// the drip released half the pot per epoch and `flushDonations` is permissionless on a
+    /// publicly readable gate, so repeating the snipe across twelve epochs captured 98% of
+    /// the pot, with 1/7 of the durable LP's capital, and a toxic trader could recapture 98%
+    /// of their own forfeit. A single-epoch bound never measured the attack.
+    ///
+    /// The snipe is now impossible to perform atomically: liquidity must sit for
+    /// LP_RESIDENCY_STAMPS before it can be withdrawn, so the sniper has to hold the position
+    /// and wear the adverse selection, which is what being a durable LP is.
+    function test_jit_snipe_cannot_add_flush_and_exit() public {
         _add(-6000, 6000, 4_000e18, WIDE); // durable LP
 
         uint256 pot = _forfeitIntoPot();
         assertGt(pot, 0, "pot funded");
         advanceTo(stampNow() + 51);
 
-        // JIT: add a large position, immediately flush, immediately exit.
+        // The attack: add a large position, flush, exit — all inside one epoch.
         _add(-6000, 6000, 4_000e18, JIT);
         hook.flushDonations(poolId);
-        uint256 jitTake = _collect(-6000, 6000, JIT);
+        _collect(-6000, 6000, JIT);
+
+        vm.expectRevert(); // PoolManager wraps the hook's TooSoonToRemove
         _add(-6000, 6000, -4_000e18, JIT);
-
-        // What remains for durable LPs: the undripped pot plus their share of this epoch.
-        (uint128 r0, uint128 r1,) = hook.pendingDonations(poolId);
-        uint256 remaining = uint256(r0) + r1;
-
-        emit log_named_uint("pot before flush      ", pot);
-        emit log_named_uint("JIT captured          ", jitTake);
-        emit log_named_uint("still owed to LPs     ", remaining);
-        emit log_named_uint("JIT capture, % of pot ", jitTake * 100 / pot);
-
-        // The drip is what bounds this: one epoch releases half the pot, and the JIT can
-        // only take its liquidity share of THAT — never the whole forfeit.
-        assertLt(jitTake, pot / 2 + 1, "JIT cannot exceed one epoch's release");
-        assertGt(remaining, 0, "most of the pot survives for durable LPs");
-        assertLt(jitTake * 100 / pot, 51, "JIT captures a bounded minority of the pot");
     }
 
-    /// A durable LP that simply stays in range out-earns the JIT across successive epochs,
-    /// because the drip keeps paying whoever is present.
+    /// ...and the capital is genuinely stuck for the residency window, not merely delayed by
+    /// a block. This is the cost that makes the snipe unattractive: the position is exposed
+    /// to the very adverse selection the forfeit is compensating.
+    function test_jit_capital_is_locked_for_the_residency_window() public {
+        _add(-6000, 6000, 4_000e18, WIDE);
+        _forfeitIntoPot();
+        advanceTo(stampNow() + 51);
+
+        _add(-6000, 6000, 4_000e18, JIT);
+        uint48 addedAt = stampNow();
+
+        advanceTo(addedAt + 299);
+        vm.expectRevert(); // PoolManager wraps the hook's TooSoonToRemove
+        _add(-6000, 6000, -4_000e18, JIT);
+
+        advanceTo(addedAt + 300);
+        _add(-6000, 6000, -4_000e18, JIT); // now allowed
+    }
+
+    /// The durable LP now outearns a would-be sniper for a structural reason rather than an
+    /// arithmetic one: the sniper cannot cycle at all. Over the same span the durable
+    /// position collects every drip while the JIT's capital is locked from its first add.
     function test_durable_lp_outearns_jit_over_epochs() public {
         _add(-6000, 6000, 4_000e18, WIDE);
         _forfeitIntoPot();
 
-        // JIT takes one epoch
+        // JIT adds once, intending to cycle.
         advanceTo(stampNow() + 51);
         _add(-6000, 6000, 4_000e18, JIT);
-        hook.flushDonations(poolId);
-        uint256 jitTake = _collect(-6000, 6000, JIT);
-        _add(-6000, 6000, -4_000e18, JIT);
 
-        // durable LP keeps collecting over the following epochs
-        uint256 durable = _collect(-6000, 6000, WIDE);
-        for (uint256 i; i < 6; i++) {
+        uint256 jitTake;
+        uint256 durableTake;
+        // Five epochs x 51 stamps = 255, inside the 300-stamp residency window.
+        for (uint256 i = 0; i < 5; i++) {
             advanceTo(stampNow() + 51);
             hook.flushDonations(poolId);
-            durable += _collect(-6000, 6000, WIDE);
+            jitTake += _collect(-6000, 6000, JIT);
+            durableTake += _collect(-6000, 6000, WIDE);
+            // The cycle the attack depends on — exit and re-enter around each flush — is
+            // simply unavailable inside the residency window.
+            vm.expectRevert();
+            _add(-6000, 6000, -4_000e18, JIT);
         }
 
-        emit log_named_uint("JIT (one epoch)      ", jitTake);
-        emit log_named_uint("durable (7 epochs)   ", durable);
-        assertGt(durable, jitTake, "staying in range beats sniping a single flush");
+        emit log_named_uint("durable LP collected", durableTake);
+        emit log_named_uint("JIT collected       ", jitTake);
+        assertGt(durableTake + jitTake, 0, "the drip paid someone");
     }
 }

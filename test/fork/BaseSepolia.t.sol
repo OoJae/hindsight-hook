@@ -52,6 +52,7 @@ contract BaseSepoliaFork is Test {
             uint160(
                 Hooks.AFTER_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
                     | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG
+                    | Hooks.BEFORE_ADD_LIQUIDITY_FLAG | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
             ) ^ (0x4444 << 144)
         );
         // FlashblockNumber = address(0) ⇒ block.number fallback clock
@@ -127,7 +128,7 @@ contract BaseSepoliaFork is Test {
         (bool needed0,) = upkeep.checkUpkeep(abi.encode(uint8(0)));
         assertFalse(needed0);
 
-        vm.roll(block.number + 3); // 3 blocks × 10 stamps = 30 > N+W (25)
+        vm.roll(block.number + 8); // 8 blocks × 10 stamps = 80 > N+W (75)
 
         (bool needed, bytes memory data) = upkeep.checkUpkeep(abi.encode(uint8(0)));
         assertTrue(needed, "checkUpkeep sees the matured swap");

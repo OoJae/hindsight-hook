@@ -26,18 +26,20 @@ contract DonationFlushTest is HindsightFixture {
         assertEq(uint256(p0) + p1, pot, "no flush within the epoch");
     }
 
-    function test_drip_halves_pot_each_epoch() public {
+    /// The drip releases 1/DRIP_DENOM per epoch. It was 1/2 until round 3, which is why a
+    /// JIT could take 98% of a pot in twelve flushes; the spec always said ~1/50.
+    function test_drip_releases_one_fiftieth_per_epoch() public {
         uint256 pot = _forfeitOne();
         advanceTo(stampNow() + 51); // one epoch later
         hook.flushDonations(poolId);
         (uint128 p0, uint128 p1,) = hook.pendingDonations(poolId);
         uint256 after1 = uint256(p0) + p1;
-        assertApproxEqAbs(after1, pot / 2, 1, "half the pot dripped");
+        assertApproxEqAbs(after1, pot - pot / 50, 2, "one fiftieth of the pot dripped");
 
         advanceTo(stampNow() + 51);
         hook.flushDonations(poolId);
         (p0, p1,) = hook.pendingDonations(poolId);
-        assertApproxEqAbs(uint256(p0) + p1, after1 / 2, 1, "exponential drip");
+        assertApproxEqAbs(uint256(p0) + p1, after1 - after1 / 50, 2, "geometric drip");
     }
 
     function test_lps_actually_collect_the_forfeits() public {
@@ -72,6 +74,9 @@ contract DonationFlushTest is HindsightFixture {
         driftPrice(true, 20, -30e18);
         advanceTo(pastWindow(id));
 
+        // Pull ALL liquidity before settlement — Pool.donate would revert. Past the LP
+        // residency window first; the fixture's position was added in setUp.
+        advanceTo(stampNow() + 300);
         // Pull ALL liquidity before settlement — Pool.donate would revert.
         modifyLiquidityRouter.modifyLiquidity(
             key,
