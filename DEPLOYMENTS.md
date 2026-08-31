@@ -2,6 +2,14 @@
 
 **Public frontend: https://oojae.github.io/hindsight-hook/**
 
+| Route | What it is |
+|---|---|
+| `/` | The landing page — what the mechanism is, in one scroll |
+| `/mechanism` | How a swap becomes a verdict, in four steps |
+| `/evidence` | The numbers, the nulls, and the retracted claims |
+| `/swap` | The live tool: swap on the pool and watch it settle |
+| `/lp` · `/toxicity` · `/explorer` | LP dashboard, address lookup, client-side re-pricer |
+
 Deployer (all chains): `0x5d4E95E57cf3369E31E6a50D7C4fECB04177226f`
 
 ## Current deployment: v8 (three audit rounds closed — this is what to review)

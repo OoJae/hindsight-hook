@@ -1,0 +1,1 @@
+{"n": 800, "stride": 5, "fields": ["t", "tick", "markout", "theta", "usd"], "seconds": 2183, "toxic": 307, "tickMin": -198512, "tickMax": -198216, "pool": "Unichain mainnet ETH/USDC 5bps", "note": "A contiguous run of real consecutive swaps. Not sampled, not smoothed.", "bin": "ribbon.bin"}

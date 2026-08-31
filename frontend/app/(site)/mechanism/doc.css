@@ -1,0 +1,20 @@
+/* Reading pages. No canvas: the ribbon is the landing's signature and spending
+   it again here would dilute it. These are the record — quiet and dense. */
+
+.doc-head { border-top: 0; padding-top: clamp(6rem, 14vh, 9rem); }
+.doc-head .bandbody { padding-bottom: clamp(2rem, 5vh, 3.5rem); }
+.doc-title { max-width: 16ch; margin: 0 0 1.25rem; }
+
+.step .bandbody { max-width: 62ch; }
+.step-title { margin: 0 0 1rem; }
+
+.keys {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: 1.25rem 2.5rem;
+  margin: 2rem 0 0;
+  padding-top: 1.25rem;
+  border-top: var(--rule);
+}
+.keys dt { margin-bottom: 0.3rem; }
+.keys dd { margin: 0; font-size: 0.95rem; color: var(--ink); }

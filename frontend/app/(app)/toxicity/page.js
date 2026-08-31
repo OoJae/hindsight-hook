@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
-import { pub } from "../../lib/clients";
-import { HOOK, POOL_ID, hookAbi } from "../../lib/config";
+import { pub } from "../../../lib/clients";
+import { HOOK, POOL_ID, hookAbi } from "../../../lib/config";
 import { parseUnits, formatUnits } from "viem";
 
 export default function ToxicityPage() {

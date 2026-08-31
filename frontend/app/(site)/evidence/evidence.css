@@ -1,0 +1,59 @@
+/* Reading measure: the null table was running the full viewport width. */
+.band .bandbody { max-width: 68ch; }
+
+.figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  gap: 2.5rem 3rem;
+  margin: 0;
+}
+.figures dt { margin-bottom: 0.75rem; max-width: 24ch; }
+.figures dd { margin: 0; display: grid; gap: 0.4rem; }
+.fig {
+  font-family: var(--display);
+  font-weight: 700;
+  font-stretch: 125%;
+  font-size: clamp(2.25rem, 4vw, 3.25rem);
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--signal);
+}
+.fig-note { color: var(--muted); font-size: 0.95rem; line-height: 1.45; }
+
+.tbl {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 2rem;
+  font-size: 0.95rem;
+}
+.tbl th {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: var(--t-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 0 1rem 0.6rem 0;
+  border-bottom: var(--rule);
+}
+.tbl td { padding: 0.7rem 1rem 0.7rem 0; border-bottom: var(--rule); }
+.tbl .neg { color: var(--muted); }
+.tbl .pos { color: var(--signal); }
+.tbl .is-shipped td { color: var(--ink); }
+.tbl .is-shipped .label { margin-left: 0.6rem; color: var(--signal); }
+
+/* The retractions. Structure encodes the correction: what it was, why it was
+   wrong, what it is now. */
+.retract .bandbody { max-width: 68ch; }
+.retractions { list-style: none; margin: 2.5rem 0 2.5rem; padding: 0; display: grid; gap: 1px; }
+.retractions > li {
+  border-top: var(--rule);
+  padding: 1.75rem 0;
+  display: grid;
+  gap: 0.75rem;
+}
+.retractions > li:last-child { border-bottom: var(--rule); }
+.retractions p { margin: 0; color: var(--muted); }
+.retractions strong { color: var(--claw); font-weight: 400; }
+.retractions .label:last-child { color: var(--signal); }

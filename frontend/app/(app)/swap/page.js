@@ -1,12 +1,12 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { encodeAbiParameters, formatUnits, parseUnits } from "viem";
-import { pub, getWallet } from "../lib/clients";
+import { pub, getWallet } from "../../../lib/clients";
 import {
   HOOK, POOL_ID, POOL_KEY, SWAP_ROUTER, TOKEN0, TOKEN1,
   MATURITY, WINDOW, MIN_SQRT_PRICE_PLUS_1, MAX_SQRT_PRICE_MINUS_1,
   hookAbi, swapRouterAbi, erc20Abi,
-} from "../lib/config";
+} from "../../../lib/config";
 
 export default function SwapPage() {
   const [account, setAccount] = useState(null);

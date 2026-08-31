@@ -1,9 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import { formatUnits } from "viem";
-import { pub } from "../../lib/clients";
-import { HOOK, hookAbi } from "../../lib/config";
-import { getLogsChunked } from "../../lib/logs";
+import { pub } from "../../../lib/clients";
+import { HOOK, hookAbi } from "../../../lib/config";
+import { getLogsChunked } from "../../../lib/logs";
 
 export default function LpPage() {
   const [settles, setSettles] = useState([]);
