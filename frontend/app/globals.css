@@ -105,6 +105,17 @@ body::after {
   font-feature-settings: "tnum" 1;
 }
 
+/* Greek parameters and shell commands must survive .label's uppercasing: ρ
+   uppercases to Ρ, which reads as a Latin P, and a shell command in caps is not
+   a shell command. */
+.keep-case { text-transform: none; }
+
+code.mono {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink);
+}
+
 .num {
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
@@ -170,12 +181,13 @@ a.u:hover { text-decoration-color: var(--signal); color: var(--signal); }
 .band > .stamp {
   padding-top: clamp(1.5rem, 3vw, 2.5rem);
   position: sticky;
-  top: 0;
+  /* Clears the fixed header, which the stamp used to stick underneath. */
+  top: clamp(3.75rem, 6vw, 4.75rem);
   align-self: start;
   height: max-content;
 }
 
-.band > .bandbody { padding-block: clamp(3.5rem, 9vw, 9rem); min-width: 0; }
+.band > .bandbody { padding-block: clamp(3rem, 6.5vw, 6.5rem); min-width: 0; }
 
 @media (max-width: 780px) {
   .band { grid-template-columns: 1fr; }

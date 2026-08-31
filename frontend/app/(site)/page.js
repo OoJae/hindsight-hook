@@ -96,7 +96,7 @@ export default function Landing() {
       <Act
         n="02"
         stamp="+50·000"
-        title="θ is measured before you arrive"
+        title={<><span className="keep-case">θ</span> is measured before you arrive</>}
         body="The threshold breathes with volatility, so a violent tape doesn't confiscate
         honest flow. It is computed from the two minutes before your swap landed — a window
         that had already closed, which is the only way you cannot move the bar you are

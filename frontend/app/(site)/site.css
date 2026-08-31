@@ -7,9 +7,21 @@
   display: flex;
   align-items: center;
   gap: clamp(0.75rem, 2.5vw, 2rem);
-  padding: clamp(0.9rem, 2vw, 1.4rem) var(--gutter);
-  mix-blend-mode: difference; /* stays legible over both the void and the tape */
+  padding: clamp(0.9rem, 2vw, 1.4rem) var(--gutter) clamp(2.25rem, 4vw, 3.25rem);
+  /* Was mix-blend-mode: difference, which earned its keep over the tape. With
+     the tape gone it only had body copy to difference against, and the nav came
+     apart wherever a paragraph scrolled under it. A scrim is honest here: the
+     header sits on the page rather than fighting it. */
+  background: linear-gradient(
+    to bottom,
+    rgba(11, 13, 14, 0.94) 0%,
+    rgba(11, 13, 14, 0.82) 48%,
+    rgba(11, 13, 14, 0) 100%
+  );
+  /* The gradient's tail is decorative and must not eat clicks. */
+  pointer-events: none;
 }
+.siteheader > * { pointer-events: auto; }
 
 .lockup {
   display: inline-flex;
@@ -56,27 +68,50 @@
 }
 
 .hero-stamp { padding-bottom: 0.6rem; }
-.hero-body { max-width: min(100%, 62rem); }
+
+/* Title left, lede and scroll cue stacked bottom-right. Bottom-aligned, so the
+   title's last baseline sits on the cue's — the page starts on a level line. */
+.hero-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  /* The title spans both rows and is far taller than the lede. Without an
+     explicit 1fr the browser hands its surplus height to BOTH rows, which
+     leaves the lede floating in the middle of the column. */
+  grid-template-rows: 1fr auto;
+  column-gap: clamp(2rem, 5vw, 5.5rem);
+  align-items: end;
+}
 
 .hero-title {
-  margin-bottom: clamp(1.25rem, 3vh, 2rem);
+  grid-column: 1;
+  grid-row: 1 / 3;
+  align-self: end;
+  margin: 0;
   font-size: clamp(2.4rem, 6.4vw, 5.6rem);
   max-width: 13ch;
 }
 .hero-title .rv > span { transition-duration: 1.1s; }
 
-.hero .lede { max-width: 46ch; color: var(--ink); }
-.hero-foot {
-  position: absolute;
-  right: var(--gutter);
-  bottom: clamp(2.5rem, 7vh, 5rem);
+.hero .lede {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
+  max-width: 40ch;
+  color: var(--ink);
+  margin: 0;
+}
+.hero-foot { grid-column: 2; grid-row: 2; align-self: end; margin-top: 1.5rem; }
+
+@media (max-width: 980px) {
+  .hero-body { grid-template-columns: 1fr; }
+  .hero-title { grid-column: 1; grid-row: auto; margin-bottom: clamp(1.25rem, 3vh, 2rem); }
+  .hero .lede { grid-column: 1; grid-row: auto; max-width: 46ch; }
+  .hero-foot { grid-column: 1; grid-row: auto; margin-top: 1.75rem; }
 }
 
 @media (max-width: 780px) {
   .hero { grid-template-columns: 1fr; align-content: end; }
   .hero-stamp { padding-bottom: 2rem; }
-  /* The cue would sit on the last line of the lede at this width. */
-  .hero-foot { position: static; margin-top: 1.75rem; }
 }
 
 /* ---- the withheld verdict ------------------------------------------------ */
@@ -124,28 +159,39 @@
 
 /* ---- acts ---------------------------------------------------------------- */
 
-.act .bandbody { max-width: 54ch; }
+/* Each act is a ledger row read left to right: the stamp and its index, then
+   the claim, then the explanation. The claim column keeps the measure the title
+   already had, so nothing reflows — the body simply moves out of the title's
+   shadow and into the space beside it. */
+.act .bandbody {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  column-gap: clamp(2rem, 5vw, 5.5rem);
+  align-items: start;
+}
+
 .act-n {
   font-size: clamp(1.75rem, 3vw, 2.5rem);
   color: var(--hairline);
   line-height: 1;
   margin-top: 0.35rem;
 }
-.act-title { margin: 0 0 1.1rem; }
-.act-body { color: var(--muted); margin: 0; }
+.act-title { grid-column: 1; grid-row: 1; margin: 0; }
+.act-body {
+  grid-column: 2;
+  grid-row: 1;
+  color: var(--muted);
+  margin: 0;
+  max-width: 50ch;
+  /* Optical: sets the body's first line against the title's cap height rather
+     than its em box, which otherwise reads as a hair too high. */
+  padding-top: clamp(0.3rem, 0.8vw, 0.85rem);
+}
 .act-body strong { color: var(--ink); font-weight: 400; }
 
-.stat { margin-top: clamp(2rem, 5vh, 3.5rem); }
-.stat-v {
-  font-size: clamp(3rem, 8vw, 7rem);
-  line-height: 0.9;
-  letter-spacing: -0.04em;
-  color: var(--signal);
-  font-weight: 700;
-  font-stretch: 125%;
-}
-.stat-k { margin-top: 0.6rem; max-width: 26ch; }
-
+/* The one big figure belongs under the claim, in the wide column that can hold
+   it at 7rem. */
+.stat { grid-column: 1; grid-row: 2; margin-top: clamp(2rem, 5vh, 3.5rem); }
 /* ---- handoff ------------------------------------------------------------- */
 
 .handoff .bandbody { max-width: none; }
@@ -186,4 +232,17 @@
   justify-content: space-between;
   padding: clamp(2rem, 5vw, 3rem) var(--gutter);
   border-top: var(--rule);
+}
+
+/* ---- one column ---------------------------------------------------------
+   Below this the two-column ledger rows would each be too narrow to hold a
+   readable measure, so every band stacks.
+   ------------------------------------------------------------------------ */
+@media (max-width: 980px) {
+  .act .bandbody { grid-template-columns: 1fr; }
+  .act-title,
+  .act-body,
+  .stat { grid-column: 1; grid-row: auto; }
+  .act-title { margin-bottom: 1.1rem; }
+  .act-body { padding-top: 0; max-width: 58ch; }
 }

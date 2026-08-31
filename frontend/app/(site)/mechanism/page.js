@@ -29,7 +29,7 @@ const STEPS = [
     it over the settlement window instead, which let a trade raise the bar it was judged
     against: 927 swaps on the real tape were acquitted by their own companion prints. Now that
     number is zero, because there is nothing left to write into.`,
-    k: [["θ", "θ_min + 1.4 × trailing σ"], ["Source", "[t − 120s, t), already closed"]],
+    k: [[<span className="keep-case" key="th">θ</span>, "θ_min + 1.4 × trailing σ"], ["Source", "[t − 120s, t), already closed"]],
   },
   {
     n: "03",
@@ -80,7 +80,7 @@ export default function Mechanism() {
             <p className="act-body fade" style={{ "--rv-delay": "90ms" }}>{s.b}</p>
             <dl className="keys fade" style={{ "--rv-delay": "180ms" }}>
               {s.k.map(([k, v]) => (
-                <div key={k}>
+                <div key={v}>
                   <dt className="label">{k}</dt>
                   <dd className="num">{v}</dd>
                 </div>

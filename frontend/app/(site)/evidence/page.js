@@ -10,10 +10,16 @@ export const metadata = {
 };
 
 const NUMBERS = [
-  ["ρ — realized adverse selection recovered", "53.8%", "$2,688 of $5,002"],
-  ["Benign flow", "5.00 bps", "the headline fee, bond refunded in full"],
-  ["Informed flow", "12.32 bps", "fee plus the forfeited share of its bond"],
-  ["Permutation null at the shipped horizon", "z = +6.14", "beats random labels 30 of 30"],
+  {
+    id: "rho",
+    k: (<><span className="keep-case">ρ</span> — realized adverse selection recovered</>),
+    v: "53.8",
+    u: "%",
+    note: "$2,688 of $5,002",
+  },
+  { id: "benign", k: "Benign flow", v: "5.00", u: "bps", note: "the headline fee, bond refunded in full" },
+  { id: "informed", k: "Informed flow", v: "12.32", u: "bps", note: "fee plus the forfeited share of its bond" },
+  { id: "null", k: "Permutation null at the shipped horizon", v: "+6.14", u: "z", note: "beats random labels 30 of 30" },
 ];
 
 export default function Evidence() {
@@ -38,12 +44,15 @@ export default function Evidence() {
         <div className="stamp label">Headline</div>
         <div className="bandbody">
           <dl className="figures">
-            {NUMBERS.map(([k, v, note], i) => (
-              <div key={k} className="fade" style={{ "--rv-delay": `${i * 70}ms` }}>
-                <dt className="label">{k}</dt>
+            {NUMBERS.map((f, i) => (
+              <div key={f.id} className="fade" style={{ "--rv-delay": `${i * 70}ms` }}>
+                <dt className="label">{f.k}</dt>
                 <dd>
-                  <span className="fig num">{v}</span>
-                  <span className="fig-note">{note}</span>
+                  <span className="fig num">
+                    {f.v}
+                    <span className="fig-u">{f.u}</span>
+                  </span>
+                  <span className="fig-note">{f.note}</span>
                 </dd>
               </div>
             ))}
@@ -51,7 +60,7 @@ export default function Evidence() {
         </div>
       </section>
 
-      <section className="band" data-reveal>
+      <section className="band ev-row" data-reveal>
         <div className="stamp label">The null</div>
         <div className="bandbody">
           <h2 className="display h-sub step-title fade">We publish the horizons that fail</h2>
@@ -78,7 +87,7 @@ export default function Evidence() {
       </section>
 
       {/* The differentiator. Every other submission shows what worked. */}
-      <section className="band retract" data-reveal>
+      <section className="band retract ev-row" data-reveal>
         <div className="stamp label">Retracted</div>
         <div className="bandbody">
           <h2 className="display h-section step-title fade">What we got wrong</h2>
@@ -126,7 +135,7 @@ export default function Evidence() {
             </li>
           </ol>
 
-          <p className="act-body fade" style={{ "--rv-delay": "400ms" }}>
+          <p className="act-body ev-tail fade" style={{ "--rv-delay": "400ms" }}>
             What replaced the first retraction is the test that actually holds. Charge measured
             on the first half of the week predicts which <em>addresses</em> adversely select in
             the second: Spearman <span className="num">+0.735</span>, permutation{" "}

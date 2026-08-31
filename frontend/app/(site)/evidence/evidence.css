@@ -1,13 +1,42 @@
-/* Reading measure: the null table was running the full viewport width. */
-.band .bandbody { max-width: 68ch; }
+/* A ledger row: the heading indexes on the left, the prose reads on the right,
+   and anything tabular spans the whole width beneath both. Prose keeps its own
+   measure per element rather than a blanket clamp on the band, which used to
+   cost the four headline figures a column and left the right half empty. */
+.ev-row .bandbody {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  column-gap: clamp(2rem, 5vw, 5.5rem);
+  align-items: start;
+}
+.ev-row .bandbody > * { grid-column: 2; max-width: 60ch; }
+.ev-row .bandbody > h2 {
+  grid-column: 1;
+  grid-row: 1;
+  max-width: none;
+  margin: 0;
+}
+.ev-row .bandbody > .act-body { grid-row: 1; }
 
+/* Every row is placed explicitly. Auto-placement put the closing paragraph back
+   in row 1, on top of the intro, because the cursor does not advance past a
+   full-width span the way the sparse rules read like they should. */
+.ev-row .bandbody > .tbl,
+.ev-row .bandbody > .retractions { grid-column: 1 / -1; grid-row: 2; max-width: none; }
+/* Four numeric columns stretched to the full width read as unrelated figures
+   rather than as one row. */
+.ev-row .bandbody > .tbl { max-width: 86ch; }
+.ev-row .bandbody > .ev-tail { grid-column: 2; grid-row: 3; max-width: 60ch; }
+
+/* Four headline numbers, four columns. */
 .figures {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
   gap: 2.5rem 3rem;
   margin: 0;
 }
-.figures dt { margin-bottom: 0.75rem; max-width: 24ch; }
+/* Two label lines reserved, so all four numbers share a baseline whether their
+   label runs to one line or two. */
+.figures dt { margin-bottom: 0.75rem; max-width: 24ch; min-height: 3.3em; }
 .figures dd { margin: 0; display: grid; gap: 0.4rem; }
 .fig {
   font-family: var(--display);
@@ -17,6 +46,14 @@
   letter-spacing: -0.03em;
   line-height: 1;
   color: var(--signal);
+}
+/* The unit rides small beside the value. It also buys the quarter-width column
+   enough room to hold "12.32 bps" on one line, which it could not at parity. */
+.fig-u {
+  font-size: 0.4em;
+  letter-spacing: 0.02em;
+  margin-left: 0.3em;
+  color: var(--signal-dim);
 }
 .fig-note { color: var(--muted); font-size: 0.95rem; line-height: 1.45; }
 
@@ -43,17 +80,44 @@
 .tbl .is-shipped td { color: var(--ink); }
 .tbl .is-shipped .label { margin-left: 0.6rem; color: var(--signal); }
 
-/* The retractions. Structure encodes the correction: what it was, why it was
-   wrong, what it is now. */
-.retract .bandbody { max-width: 68ch; }
+/* The retractions. Structure encodes the correction, and now the layout does
+   too: the before and after labels stack in the left column, the reason for the
+   change reads down the right. */
 .retractions { list-style: none; margin: 2.5rem 0 2.5rem; padding: 0; display: grid; gap: 1px; }
 .retractions > li {
   border-top: var(--rule);
   padding: 1.75rem 0;
   display: grid;
-  gap: 0.75rem;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  column-gap: clamp(2rem, 5vw, 5.5rem);
+  row-gap: 0.75rem;
+  align-items: start;
 }
+.retractions > li > .label:first-child { grid-column: 1; grid-row: 1; }
+.retractions > li > p { grid-column: 2; grid-row: 1 / 3; max-width: 58ch; }
+.retractions > li > .label:last-child { grid-column: 1; grid-row: 2; }
 .retractions > li:last-child { border-bottom: var(--rule); }
 .retractions p { margin: 0; color: var(--muted); }
 .retractions strong { color: var(--claw); font-weight: 400; }
 .retractions .label:last-child { color: var(--signal); }
+
+/* The intro pages share the landing's head layout; the blanket reading measure
+   that used to sit on .bandbody would have collapsed it back to one column. */
+.doc-head .bandbody { max-width: none; }
+.band:not(.ev-row) .bandbody > .act-body { max-width: 68ch; }
+.tbl { max-width: 78ch; }
+
+@media (max-width: 980px) {
+  .ev-row .bandbody { grid-template-columns: 1fr; }
+  .ev-row .bandbody > *,
+  .ev-row .bandbody > h2,
+  .ev-row .bandbody > .act-body,
+  .ev-row .bandbody > .tbl,
+  .ev-row .bandbody > .retractions,
+  .ev-row .bandbody > .ev-tail { grid-column: 1; grid-row: auto; }
+  .ev-row .bandbody > h2 { margin-bottom: 1rem; }
+  .retractions > li { grid-template-columns: 1fr; }
+  .retractions > li > .label:first-child,
+  .retractions > li > p,
+  .retractions > li > .label:last-child { grid-column: 1; grid-row: auto; }
+}
