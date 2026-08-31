@@ -4,10 +4,10 @@
 
 Deployer (all chains): `0x5d4E95E57cf3369E31E6a50D7C4fECB04177226f`
 
-## Current deployment: v7 (all audit findings closed at the root — this is what to review)
+## Current deployment: v8 (three audit rounds closed — this is what to review)
 
-v7 is the deployment in which every audit finding is closed, each with an executable repro
-committed *before* the fix (`test/integration/AuditRepro2.t.sol`,
+v8 closes round 3. Every finding across all three rounds has an executable repro committed
+*before* its fix (`test/integration/AuditRepro2.t.sol`,
 `test/integration/EvictionExploit.t.sol`). Verify the source matches the chain with
 `forge build && python3 tools/verify_deployment.py`.
 
@@ -22,7 +22,32 @@ committed *before* the fix (`test/integration/AuditRepro2.t.sol`,
 | **M9** *medium* | The live proof the project cited inverted the pitch: the largest markout was acquitted and two smaller ones convicted, because θ and the markout were measured over **the same window** — so a trade's own companion prints raised the very bar it was judged against | **v7 closes this at the root.** θ's volatility is now measured over `[exec−600, exec−1]`, a window that has already closed when the swap lands, and is snapshotted into the swap record at execution. Padding the settlement window now moves θ by *exactly zero* — asserted as an equality, not a bound. See "What changed in v7" below |
 | **M10** *high, found live* | Not from the audit — **found by running v5 on-chain.** The Reactive lane stalled for ~30 minutes, and five swaps whose windows had already been **finalized benign** (markout 22–27 against θ 31) were auto-forfeited in full, because `_verdict` checked the grace deadline *before* consulting the finalized snapshot. That defeats the entire purpose of `finalize` and confiscates honest traders' bonds whenever a keeper is late | a finalized verdict now outranks the grace deadline. The anti-escape property is unchanged, carried by the precise mechanism instead of a blunt clock: a window whose data was *destroyed* still forfeits in full |
 
-### What changed in v7, and why it is not just a patch
+### Round 3 — what a third adversarial pass found in v7
+
+Six attack lanes, refute-by-default verification (two skeptics per finding, defaulting to
+*refuted*), then a completeness critic. 25 raw findings → 14 verified → 13 survived. Report in
+`../AUDIT-REPORT-3.md`. The shape of it: v7 froze θ because a mutable θ made the verdict
+retroactive — and froze exactly *one* of the four inputs to a verdict.
+
+| # | Finding | Fix |
+|---|---|---|
+| **B** *critical* | `setParams` could **relocate an in-flight swap's markout window**. The M6 ratchet guards the deadline *sum*; nothing pinned the *split*, and `_doSettle` recomputed the window from live params. At the live values the owner could set `maturity=a, grace=3050−a`, pass the bound with **equality**, and repeat without limit. Reproduced: the markout a swap was judged on moved **1110 → 1200 ticks** after it landed | `SwapRecord` now carries `fMaturity`, `fWindow` and `fRamp` beside `fTheta`. The entire verdict tuple is fixed at execution |
+| **C** *high* | `rampTicks` was read live too, and its bound was **arithmetically vacuous**: `MarkoutLib` returns a full forfeit for any excess ≥ ramp, so `ramp=1` and the forbidden `ramp=0` are identical. An owner could turn every in-flight partial forfeit into a total one | ramp frozen in the record; bound raised to `≥ 2` so it means something |
+| **D** *high* | A refund that **cannot be delivered** made a record permanently unretirable. The payout was a push transfer; a currency that reverts to one address froze that swap in `status 0` forever, and **both** automation cursors break at the first pending id — starving every honest swap behind it, with no admin recovery | the take is wrapped, falling back to minting ERC-6909 claims to the trader. Claims cannot fail, so the record always retires |
+| **E** *high* | The forfeit drip was a **bearer instrument**. It released half the pot per epoch (the spec says ~1/50) and `flushDonations` is permissionless on a readable gate. Measured: a JIT with **1/7 of the incumbent's capital took 98% of a pot**, and a toxic trader recaptured **98% of their own forfeit**. `LPSet.t.sol` asserted a *single-epoch* bound and never measured the repeated snipe | `DRIP_DENOM = 50`, plus a **60-second liquidity residency** so the snipe cannot be atomic. Fee collection is explicitly exempt |
+| **F** *high* | The earned bond discount was **farmable**, and `script/02` — added in v7 — turned the enabling parameter on for both live pools. `benignSettles` was global per address while `sizeTierCap` is per pool: farm 30 dust settles on a pool you control, spend a **10× discount** on a real one | reputation is now keyed **per pool** |
+| **A** *high* | §6's "out-of-sample" test measured **window overlap, not prediction** — see below | re-anchored; §6 rebuilt around a per-address split-half test |
+| **G3** *high* | The **backtest did not compute the contract's θ**: `ObservationLib` divides as integers and `_theta` floors again, while `compare.py` used floats | backtest is integer-for-integer, and capped at the 128-slot ring |
+| **I** *high* | §2's "0.0% from benign flow" was a **string literal**, true by construction | scored a second way against an independent label |
+
+Two findings of my own, found before the report landed, are folded in: the `rampTicks` lever
+(C above) and that permissionless `poke()` can **deflate θ for everyone** by diluting a
+count-mean with zero-magnitude jumps. The audit's economics on the latter were better than
+mine — +$262/week, not the +$625 I first computed against the float model — and it is
+disclosed rather than fixed, because the estimator change it needs would move every headline
+again.
+
+### What changed in v7 (retained — this is why θ moved to a trailing window)
 
 v6 *bounded* M9 (the M4 clamp cut the pump from 171 ticks to 31). v7 removes the channel, and
 the investigation that led there changed the mechanism's own story.
@@ -68,14 +93,14 @@ that is its own input.
 ### Unichain Sepolia (1301) — primary, flashblock-native
 | Contract | Address |
 |---|---|
-| **HindsightHook v7** | `0xC4E83D74A486C056c6164655F1d2D5ae5408d0C4` |
-| dETH (token0) | `0x7401fd17a05Bf34CABAaDb233638E90375bb7d41` |
-| dUSDC (token1) | `0xEbb36dd92C105c88C8Eb8d9e1c6d611F0191f157` |
-| PoolSwapTest router | `0x5117b13AeB096e24FDf2F90a2012Df7D77DFF4da` |
-| PoolModifyLiquidityTest | `0x6c85c9d828610375326DDE333335F80c788ab8a7` |
-| Pool (5bps, ts=10) | poolId `0xd745e877a4fdbd31ba9989e11750a9a720af064e773a7b65fe68b6c48213ab03` |
+| **HindsightHook v8** | `0xDecF9FA10d1dE837D96Fca76fE31302D82641aC4` |
+| dETH (token0) | `0x7A18330B94Cdc15cf2426A4C61d2948B5C78562d` |
+| dUSDC (token1) | `0xDa18a4C19601E698Af9e74d0b84d945871f096ea` |
+| PoolSwapTest router | `0x4C12f1300b5277FEb15Ba77F8d7e9D8781bD11d0` |
+| PoolModifyLiquidityTest | `0x6faB9817C9c7bA2049DBdBf35705e2C04b1085B9` |
+| Pool (5bps, ts=10) | poolId `0x00d329ee1d22b569f6912ff6d01795d6c7f221dcff386b89f12ba1be18f3ce5a` |
 | Settlement horizon (live) | maturity **50** + window **25** flashblocks (~10s + 5s) |
-| **HindsightCallback v7** (Reactive dest) | `0x7d7Bf00f54648944Cafc336F357934f8F8994d76` |
+| **HindsightCallback v8** (Reactive dest) | `0xF6Dad7BB03a9cf89f4E3b98912Aea695F6b27227` |
 | Clock: official FlashblockNumber | `0x056466f1a50a6B5e4DCCF106074ee0083D721a42` (live, 200ms) |
 | Reactive callback proxy | `0x9299472A6399Fd1027ebF067571Eb3e3D7837FC4` |
 | Owner (admin, 2-step transferable) | `0x5d4E95E57cf3369E31E6a50D7C4fECB04177226f` |
@@ -100,66 +125,67 @@ re-run `activateSubscriptions()` after topping up. Separately, the Unichain Sepo
 `0xaeE94b9aB7752D3F7704bDE212c0C6A0b701571D`, whose `l2ChainId()` returns 1301) credits the
 same address on L2 in about 90 seconds.
 
-**Live v7 proofs**
-- benign swap #0 settled **autonomously by the Reactive Network**, no manual action — status
-  flipped to Refunded ~70s after the swap (10s maturity + 5s window + RSC latency)
-- the 8-swap arb burst (#1–#8) settled **entirely autonomously**. This is the table that
-  motivated the whole v7 change, so compare it against v6's directly:
+**Live v8 proofs**
+- benign swap #0 settled **autonomously by the Reactive Network** ~45s after the swap
+- the 8-swap arb burst settled autonomously, and the θ column is now the cleanest it has been:
 
-  | swap | markout | θ | v7 verdict | | v6 markout | v6 θ | v6 verdict |
-  |---|---|---|---|---|---|---|---|
-  | #1 | 29 | 3 | **forfeit** | | 20 | 31 | refund |
-  | #2 | 30 | 17 | **forfeit** | | 20 | 31 | refund |
-  | #3 | 26 | 17 | **forfeit** | | 24 | 31 | refund |
-  | #4 | 26 | 17 | **forfeit** | | 27 | 31 | refund |
-  | #5 | 25 | 17 | **forfeit** | | 24 | 31 | refund |
-  | #6 | 20 | 17 | **forfeit** | | 20 | 3 | forfeit |
-  | #7 | 10 | 17 | refund | | 10 | 3 | forfeit |
-  | #8 | 0 | 17 | refund | | 0 | 3 | refund |
+  | swap | markout | θ | ramp | verdict |
+  |---|---|---|---|---|
+  | #0 | 0 | 3 | 20 | refund |
+  | #1 | 20 | 4 | 20 | **forfeit** |
+  | #2 | 20 | 10 | 20 | **forfeit** |
+  | #3 | 17 | 12 | 20 | **forfeit** |
+  | #4 | 21 | 12 | 20 | **forfeit** |
+  | #5 | 24 | 14 | 20 | **forfeit** |
+  | #6 | 20 | 14 | 20 | **forfeit** |
+  | #7 | 10 | 17 | 20 | refund |
+  | #8 | 0 | 17 | 20 | refund |
 
-  **v6 convicted a 10-tick markout and acquitted a 27-tick one.** v7 is monotone: every
-  markout above its threshold forfeits, every one below refunds, and the ordering follows the
-  markout rather than the accident of who else happened to print inside the window.
+  θ climbs **3 → 4 → 10 → 12 → 14 → 17** as the burst accumulates trailing volatility, instead
+  of jumping in a single step: the threshold widens for the trades that come *after* the
+  violence, never for the trades that caused it. Every markout above its threshold forfeits and
+  every one below refunds. Compare v6, where the **largest** markout was acquitted and a
+  10-tick one convicted.
 
-  Read the θ column too. It is 3 for #1 — the first trade of the burst, judged against a
-  quiet tape — and 17 for #2–#8, because by then the burst *is* the trailing history. That is
-  the intended behaviour and the exact inversion of the old one: a violent tape widens the
-  threshold for the trades that come **after** it, never for the trade that caused it. #7
-  carries a 10-tick markout into a genuinely volatile tape and is correctly refunded; #1
-  carries 29 ticks into a calm one and is correctly charged.
-- forfeits stream to in-range LPs through the epoch drip rather than one lump — the anti-JIT
-  behaviour, live
-- `sizeTierCap` configured on-chain (10e18), and **the live parameters now come from
-  `script/02`** rather than an out-of-band `cast send`, so the deployment is reproducible
+  The `ramp` column is new and is the point of round 3: it is read from the swap record, not
+  from live parameters, so nothing about how these swaps are judged could be changed after
+  they landed.
+- the Base leg's settled record shows the whole frozen tuple on-chain:
+  `fTheta 3, fMaturity 50, fWindow 25, fRamp 20`
+- `sizeTierCap` is configured on-chain and the live parameters come from `script/02`, so the
+  deployment is reproducible from the repo
 
 ### Reactive Lasna (5318007)
 | Contract | Address |
 |---|---|
-| **HindsightReactive v7 (RSC)** | `0xC971B9073E118DF50FAE99FeFa7EeEaEEe32C1fC` |
-| Subscriptions | SwapRecorded@1301 (v7 hook) + Cron10 + Cron100 — 3 confirmed via system-contract events |
+| **HindsightReactive v8 (RSC)** | `0x324d3DA5f40A9D533fe8FfEa7252D7f4b348cE77` |
+| Subscriptions | SwapRecorded@1301 (v8 hook) + Cron10 + Cron100 — 3 confirmed via system-contract events |
 | Monitor | https://lasna.reactscan.net/rvm/0x5d4e95e57cf3369e31e6a50d7c4fecb04177226f |
 
 ### Base Sepolia (84532) — Chainlink Automation leg, block-fallback clock
 | Contract | Address |
 |---|---|
-| **HindsightHook v7** | `0xc60C0be68D02BD38Bc8aF44cf71D157C904950c4` |
-| dETH / dUSDC | `0x30d1Fe73d5FC78Df3Be220eCa3A85Db12E3f8494` / `0xeFeB3Ea04E929eC8A76a41aD2F809d05361dd2a2` |
-| PoolSwapTest router | `0x90CA9b6a60818AA77513Fe31919f41D747100db1` |
+| **HindsightHook v8** | `0xE07a6bb6657f1381e5665F7741DEc4d4eAC8dAc4` |
+| dETH / dUSDC | `0x3Ac4FDD4c8c43fe14065F92F493b383B21F6F5C4` / `0x45901552fea21dDDA60c7269C299C307223fcE44` |
+| PoolSwapTest router | `0xa027b4000DD79EE7A55FD6e3e788966a78D55239` |
 | PoolModifyLiquidityTest | `0xd6e1F8D864D177ad55449aa4C4776e6709B8d8d3` |
-| Pool (5bps, ts=10) | poolId `0x72b00ee0c99e47a997cd624d200613f4a12045a60dc1c4471501525c238603be` |
-| **HindsightUpkeep v7** | `0x38dED78f1ec799C5178aC1e16821aB2aB35B6893` |
+| Pool (5bps, ts=10) | poolId `0x392b68199a0e1943b291ef4f5ff5357fd1b7b18800fcf8cdcb10fa743bfc549f` |
+| **HindsightUpkeep v8** | `0x45109C72ED596bBD3786A4C5F36Ae1f88872b206` |
 | Chainlink registry / registrar (v2.3) | `0x91D4a4C3D448c7f3CB477332B1c7D420a5810aC3` / `0xf28D56F3A707E25B71Ce529a21AF388751E1CF2A` |
 
 **Upkeeps — registered programmatically** (the Automation UI is deprecated to withdraw-only):
 | mode | upkeepId | forwarder (wired ✓) |
 |---|---|---|
-| 0 settle | `69094049181521839374126344695202283104093419738140858415992704141098068099202` | `0x7568f3928f227413A490603250a2966001a6b7A6` |
-| 1 flush | `13549975320375616542271876752189533374370366669386936248115233791090478765302` | `0x0A712E6529F543FF57065C7A4703060D3A8444dE` |
-| 2 poke | `84809890909325669932730498371579414686682490134801380414810286204373809808010` | `0x0a0101F834455fB9433f0632538769B45B9C7Dad` |
+| 0 settle | `69152579333576010081723125963624263070200156798303860560930889289519614292457` | `0x2536917D3d3fAbD1E881b81806D110EB5D37cd23` |
+| 1 flush | `46070468762791783498410043672320294357459978753086533144422649441817598946315` | `0xa1033A87129cD1e625c204b8f2e8B10B4d91DF15` |
+| 2 poke | `46016421483709479932047679840499968928467126125948779487035541084177982875462` | `0xb95917D6B0A24B1375FE39259e6A7e06B0481cfC` |
 
-**Fallback-clock proof (v7, Base Sepolia).** Base has no flashblock counter, so this hook
+(Funded by cancelling the v7 upkeeps and reclaiming their LINK — testnet LINK is not
+faucet-replenishable at the rate five redeploys consume it.)
+
+**Fallback-clock proof (v8, Base Sepolia).** Base has no flashblock counter, so this hook
 is deployed with `flashblockNumber = address(0)` and runs the `block.number × 10` fallback
-clock. Full cycle proven live: retail swap → observation stamped at `461791240` (a derived
+clock. Full cycle proven live: retail swap → observation stamped at `461836920` (a derived
 stamp, not a flashblock) → `checkUpkeep(settle)` flipped **false → true** on-chain as the
 window closed → `settle(0)` → **status Refunded**, the entire 0.0024987 dETH bond returned
 to the trader in tx
@@ -182,29 +208,33 @@ forge build && python3 tools/verify_deployment.py
 ```
 
 ```
-local build: 24443 bytes runtime, 31 immutable spans masked, ObservationLib linked at 0xf210c23792630cf1a119b696d3a2922b7b7550d4
+local build: 24549 bytes runtime, 33 immutable spans masked, ObservationLib linked at 0xcc0d06b6a1794bf90ce44ab73d48a57cfe707908
 
-  MATCH    Unichain Sepolia   0xC4E83D74A486C056c6164655F1d2D5ae5408d0C4
-  MATCH    Base Sepolia       0xc60C0be68D02BD38Bc8aF44cf71D157C904950c4
+  MATCH    Unichain Sepolia   0xDecF9FA10d1dE837D96Fca76fE31302D82641aC4
+  MATCH    Base Sepolia       0xE07a6bb6657f1381e5665F7741DEc4d4eAC8dAc4
 
 All live hooks run exactly this source.
 ```
 
-The comparison is byte-for-byte over the full 24,443-byte runtime, with exactly two
+The comparison is byte-for-byte over the full 24,549-byte runtime, with exactly two
 normalisations, both mechanical: immutable spans are masked (their positions come from
 solc's own `immutableReferences`, not from us — `poolManager`, `flashblockNumber` and the
 owner necessarily differ per chain), and `ObservationLib`'s `__$…$__` link placeholders are
-resolved to its deployed address `0xf210c23792630cf1a119b696d3a2922b7b7550d4`. Both hooks
+resolved to its deployed address `0xcc0d06b6a1794bf90ce44ab73d48a57cfe707908`. Both hooks
 link the *same* library address on both chains. Nothing else is allowed to differ.
 
-The hook is 24,443 bytes against the 24,576-byte EIP-170 limit — **133 bytes of headroom**.
-That constraint shapes real decisions: `optimizer_runs` is 200 rather than 800;
+The hook is 24,549 bytes against the 24,576-byte EIP-170 limit — **27 bytes of headroom**.
+That constraint shapes real decisions: `optimizer_runs` is 50 rather than 800;
 `finalizeBatch` and `forceClockFallback` were removed rather than kept (`finalize` is
 already called implicitly by `settle`/`settleOne`, and a manual clock override was a
 liability we did not need); and the reputation-curve constants are `internal` rather than
 `public`, because each auto-generated getter cost ~50 bytes we needed for the M4–M7 fixes.
 
 ## Archived
+- **v7** (θ decoupled, but the rest of the verdict tuple was still mutable at settle time —
+  round-3 findings B and C): Unichain hook `0xC4E83D74A486C056c6164655F1d2D5ae5408d0C4`,
+  Base hook `0xc60C0be68D02BD38Bc8aF44cf71D157C904950c4`, RSC
+  `0xC971B9073E118DF50FAE99FeFa7EeEaEEe32C1fC`.
 - **v6** (M1–M10 fixed, but θ still shared the markout's window — the deployment whose own
   demo table inverted the pitch): Unichain hook
   `0x4475d1A77cb15f7867A37877B3f59E9a847990C4`, Base hook

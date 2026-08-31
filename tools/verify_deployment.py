@@ -19,13 +19,13 @@ Anything else differing means the repo does not match the chain.
 """
 import json, re, sys, urllib.request
 
-OBSERVATION_LIB = "f210c23792630cf1a119b696d3a2922b7b7550d4"  # deterministic CREATE2, same on both chains
+OBSERVATION_LIB = "cc0d06b6a1794bf90ce44ab73d48a57cfe707908"  # deterministic CREATE2, same on both chains
 
 TARGETS = [
     ("Unichain Sepolia", "https://sepolia.unichain.org",
-     "0xC4E83D74A486C056c6164655F1d2D5ae5408d0C4"),
+     "0xDecF9FA10d1dE837D96Fca76fE31302D82641aC4"),
     ("Base Sepolia", "https://sepolia.base.org",
-     "0xc60C0be68D02BD38Bc8aF44cf71D157C904950c4"),
+     "0xE07a6bb6657f1381e5665F7741DEc4d4eAC8dAc4"),
 ]
 
 

@@ -53,7 +53,7 @@ export default function LpPage() {
       </div>
       <p className="muted">
         {settles.length} settlements · {toxicCount} toxic ({settles.length ? Math.round((100 * toxicCount) / settles.length) : 0}%)
-        — forfeits drip via donate() each epoch — one flush releases half the pot, so an atomic JIT snipe cannot take it all
+        — forfeits drip via donate() each epoch (1/50 of the pot), and liquidity must reside 60s before it can be withdrawn, so the snipe cannot be atomic
       </p>
 
       <h2>Settlements</h2>
