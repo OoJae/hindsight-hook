@@ -642,11 +642,19 @@
 .appmain .bad { color: var(--ink); }
 .appmain .warn { color: var(--muted); }
 
-/* Slot 2. The SETTLED forfeit verdict, and nothing else: not a projection of one
-   inside a button, and never a per-row state. Forty orange cells down a table
-   column would turn the event back into a palette, which is the whole thing the
-   three-uses rule exists to prevent. */
-.appmain .forfeit { color: var(--claw); }
+/* No .forfeit rule, and no --claw anywhere in the app.
+
+   It was going to land on the settled forfeit verdict. Then the deployed page
+   showed what that actually looks like: /swap's ledger renders one verdict per
+   swap, so five consecutive FORFEITED TO LPS stamps ran down the right edge —
+   the same repeating row state that had just been removed from /lp's table, and
+   the exact thing the scarcity rule exists to prevent. A component that is
+   rendered once per item in a list is a row state no matter what it is called.
+
+   The app is a ledger; every verdict in it repeats. So there is no single-
+   instance forfeit here to spend the colour on, and --claw stays where it is
+   genuinely singular: /evidence's retracted claim. Signal against --ink carries
+   the verdict on its own. */
 
 /* No slot 3 — see the note above. The clawback figure is .ok, which resolves to
    --signal and matches evidence.css's .fig, where that same number already lives.

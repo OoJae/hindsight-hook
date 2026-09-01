@@ -246,10 +246,12 @@ export default function SwapPage() {
               )}
               {/* Mono stamps, not dingbats: ✓/✗ are not in a glyph vocabulary whose
                   only marks are the hook and →. The verdict is the word, in the
-                  verdict's colour. This settled stamp is the app's ONE claw use:
-                  the preview above is a projection, not a confiscation. */}
+                  verdict's colour — and no claw. This renders once per swap in a
+                  list, so it is a row state, which is the one thing the colour is
+                  never allowed to be. Signal against --ink carries the verdict
+                  perfectly well, exactly as it does in /lp's table. */}
               {r.status === 1 && <span className="label ok">refunded in full</span>}
-              {r.status === 2 && <span className="label bad forfeit">forfeited to LPs</span>}
+              {r.status === 2 && <span className="label bad">forfeited to LPs</span>}
             </div>
             {r.status === 0 && (
               <>

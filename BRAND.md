@@ -42,9 +42,9 @@ pages and the product stay the same grey instead of drifting apart.
 
 ### The three-uses rule
 
-`--claw` marks confiscation and nothing else — **and only where confiscation has actually
-happened.** Never a projection of one, and never a per-row state. It is currently spent
-twice: a settled forfeit verdict (`/swap`), and a retracted claim (`/evidence`).
+`--claw` marks confiscation and nothing else — **and only where it is genuinely singular.**
+Never a projection of one, and never a per-row state. It is currently spent **once**, on
+`/evidence`'s retracted claim. The product routes use none of it.
 
 The rule survived contact with the app, but only after breaking. Four agents restyling the
 four product routes in parallel each concluded, correctly in isolation, that their own page
@@ -54,10 +54,20 @@ rows of a settlements table. Forty orange cells is the definition of a palette. 
 is that a scarcity rule cannot be enforced locally: it is a property of the whole site, so
 it has to be checked against the whole site.
 
-The clawback figure was going to be the third use, until it turned out `evidence.css`
-already paints that exact number — ρ, "53.8% of realized adverse selection recovered" — in
+The forfeit verdict was going to be the second use, and survived one more round than it
+should have. On the deployed page /swap's ledger renders a verdict per swap, so five
+consecutive FORFEITED TO LPS stamps ran down the right edge — the same repeating row state
+that had just been removed from /lp, on the page that had argued it was the exception. **A
+component rendered once per item in a list is a row state whatever it is called**, and the
+flagship page does not get an exemption from its own rule.
+
+The clawback figure was going to be the third, until it turned out `evidence.css` already
+paints that exact number — ρ, "53.8% of realized adverse selection recovered" — in
 `--signal`. A recapture is the mechanism succeeding, which is what `--signal` means here, so
-the app matches the page it is meant to match and the third slot stays unspent.
+the app matches the page it is meant to match.
+
+What is left is a colour that appears exactly once on the entire site, which is the most an
+event can be. Signal against `--ink` carries every verdict in the product without it.
 
 Do not reach for `--claw` for warnings, errors, or emphasis. Failure is encoded by
 *promotion* — `--muted` to `--ink` — because on a near-black ground that is the loudest move
