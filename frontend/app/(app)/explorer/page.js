@@ -65,7 +65,11 @@ export default function Explorer() {
       const mk = data[o + 2 + hz];
       const vol = sigmaSrc === "trailing" ? data[o + 14] : data[o + 8 + hz];
       const fee = usd * feeRate;
-      const theta = thetaMin + k * vol;
+      // Theta as the CONTRACT computes it. The tape's trailing sigma is already the
+      // integer mean jump (ObservationLib does integer division), and _theta floors a
+      // second time in vol * thetaVolMultX10 / 10. Doing this in float overstated theta
+      // and put rho seven points under compare.py at the deployed defaults.
+      const theta = thetaMin + Math.floor((vol * Math.round(k * 10)) / 10);
       const f = Math.max(0, Math.min(1, (mk - theta) / ramp));
       const forfeit = usd * (bondBps / 1e4) * f;
       fees += fee; claw += forfeit;
@@ -154,11 +158,14 @@ export default function Explorer() {
       </p>
 
       <p className="muted">
-        Precision note: the tape ships as float32 to keep the download small, so figures here
-        can differ from <code>backtest/compare.py</code> in the last{" "}
-        <span className="num">~0.5%</span> (e.g. <span className="num">12.11 vs 12.18 bps</span>).
-        The Python suite on the full-precision CSV is the number of record; this is a
-        faithful, checkable approximation of it.
+        Precision note: at the deployed defaults this page reproduces{" "}
+        <code>backtest/compare.py</code> exactly — clawback{" "}
+        <span className="num">$2,688.40</span> of <span className="num">$5,001.53</span> gross
+        adverse selection, <span className="num">ρ = 53.8%</span>, to the cent. Theta is computed
+        the way the contract computes it: integer division, capped at the observation ring&rsquo;s
+        128 entries. The tape ships as float32 to keep the download small, so other figures can
+        differ from the Python suite in the last decimal. The Python suite on the full-precision
+        CSV remains the number of record.
       </p>
 
       {/* Two columns, and the wrappers are deliberate: with a bare .card as a direct

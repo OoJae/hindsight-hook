@@ -44,8 +44,16 @@ export default function SwapPage() {
   const [log, setLog] = useState("");
 
   const connect = async () => {
-    const { account } = await getWallet();
-    setAccount(account);
+    // getWallet throws a perfectly good message when there is no injected wallet
+    // ("no wallet — install MetaMask/Rabby"). Without this catch it died as an
+    // unhandled rejection and the button did nothing visible — which is the
+    // first thing a judge without an extension would have clicked.
+    try {
+      const { account } = await getWallet();
+      setAccount(account);
+    } catch (e) {
+      setLog(`wallet error: ${e.shortMessage ?? e.message}`);
+    }
   };
 
   // live flashblock clock + pending swaps
@@ -171,6 +179,20 @@ export default function SwapPage() {
               {stamp > 0n ? stamp.toString() : "—"}
             </span>
           </span>
+          {/* Tells a stranger, on the page they are looking at, the three things they
+              need. Everything in it is verified: the Superchain faucet lists Unichain
+              Sepolia by name and hands out 0.01 test ETH per day behind a sign-in, and
+              getWallet() adds/switches the chain on connect. */}
+          {!account && (
+            <span className="label keep-case" style={{ flexBasis: "100%", marginTop: "0.6rem", color: "var(--ink)" }}>
+              To try it: a browser wallet (MetaMask or Rabby) · Unichain Sepolia is added when you
+              connect · free test ETH at{" "}
+              <a className="u" href="https://console.optimism.io/faucet" target="_blank" rel="noreferrer">
+                console.optimism.io/faucet
+              </a>{" "}
+              (0.01/day is plenty) · then Mint demo tokens → Swap → wait ~15s → Settle.
+            </span>
+          )}
         </div>
       </div>
 

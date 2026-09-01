@@ -8,13 +8,33 @@ no RPC, no server, instant sliders — and can switch between the two sigma sour
 the change round-2 audit finding M9 forced.
 """
 import json, struct, base64, sys
-from compare import load, window, trailing_vols, USDC, MAX_VOL_JUMP, THETA_LOOKBACK
+from compare import load, window, USDC, MAX_VOL_JUMP, THETA_LOOKBACK, CARDINALITY
 
 HORIZONS = [(1, 1), (3, 2), (5, 2), (10, 5), (30, 10), (60, 20)]
 
 rows = load(sys.argv[1] if len(sys.argv) > 1 else "swaps_eth_usdc_5bp.csv")
 last = rows[-1]["block"]
-tvol = trailing_vols(rows, THETA_LOOKBACK, MAX_VOL_JUMP)   # sigma over [t-120s, t): v7
+# Sigma exactly as the CONTRACT computes it — integers all the way down, and capped at
+# the ring's 128 observations. This mirrors compare.trailing_theta_int; see its docstring.
+# The tape used to carry compare.trailing_vols, a float mean with no cardinality cap. That
+# overstates theta (the float model floors theta for 3% of swaps where the contract does
+# for 59%), and the explorer read it back and reported rho seven points under the backtest
+# at the "= deployed hook" defaults. A judge who dragged the sliders would have seen 46.5%
+# next to a headline of 53.8%.
+import bisect
+_blocks = [r["block"] for r in rows]
+_jumps = [0] + [min(abs(rows[i]["tick"] - rows[i - 1]["tick"]), int(MAX_VOL_JUMP))
+                for i in range(1, len(rows))]
+_pref = [0] * (len(_jumps) + 1)
+for _i, _j in enumerate(_jumps):
+    _pref[_i + 1] = _pref[_i] + _j
+tvol = []
+for _i, _r in enumerate(rows):
+    _lo = bisect.bisect_left(_blocks, _r["block"] - THETA_LOOKBACK)
+    if _i - _lo > CARDINALITY:            # the ring evicts the rest
+        _lo = _i - CARDINALITY
+    _cnt = _i - _lo
+    tvol.append(float((_pref[_i] - _pref[_lo]) // _cnt) if _cnt > 0 else 0.0)   # integer division, like solc
 recs = []
 for i, s in enumerate(rows):
     usd = abs(s["amount1"]) / USDC
