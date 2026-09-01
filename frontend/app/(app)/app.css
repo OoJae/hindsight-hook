@@ -744,8 +744,9 @@
    site layout mounts and this one does not. Putting either class on an app page
    without mounting it is a blank-page bug, not a missing animation.
 
-   Mounting it was considered and rejected. /lp calls location.reload() every 20
-   seconds, so any entrance would re-fire on that cadence and read as a tic; and
+   Mounting it was considered and rejected. /lp re-renders its settlements table
+   in place every 20 seconds, so an entrance keyed to mount would re-fire on
+   refreshed rows and read as a tic; and
    a masked line-rise over a live table of client-rendered rows reads as jank,
    not as craft. /explorer recomputes 55,822 rows synchronously on every drag
    frame, which is not a frame budget to spend on decoration.

@@ -6,17 +6,19 @@ export const SWAP_ROUTER = process.env.NEXT_PUBLIC_SWAP_ROUTER;
 export const POOL_ID = process.env.NEXT_PUBLIC_POOL_ID;
 
 // The block the live hook was deployed in, found by binary-searching eth_getCode
-// (see DEPLOYMENTS.md). Event scans anchor here instead of a rolling window: the
-// range of interest is "since this contract existed", which is a fixed lower
-// bound. Override when the hook address changes; lib/logs.js falls back to a
-// rolling lookback if this is unset or ahead of the chain head, so a stale value
-// degrades to the old behaviour rather than to an empty page.
+// (recorded in DEPLOYMENTS.md). Event scans anchor here rather than at a rolling
+// window: the range of interest is "since this contract existed", which is a
+// fixed lower bound, and a rolling window scans a stretch of chain older than the
+// contract on every load while silently dropping the earliest settlements once
+// the chain outruns it.
+//
+// null means "configured but unusable", which lib/logs.js turns into a visible
+// error. It is deliberately distinct from a missing value: `??` only fires on
+// null/undefined, and BigInt("") and BigInt(" ") are both 0n rather than throws,
+// so an empty override would otherwise sail through as block zero.
 export const HOOK_BLOCK = (() => {
-  try {
-    return BigInt(process.env.NEXT_PUBLIC_HOOK_BLOCK ?? "61282455");
-  } catch {
-    return 0n; // unparseable override → lib/logs.js uses the rolling window
-  }
+  const raw = (process.env.NEXT_PUBLIC_HOOK_BLOCK ?? "").trim() || "61282455";
+  return /^[0-9]+$/.test(raw) ? BigInt(raw) : null;
 })();
 
 export const POOL_KEY = {

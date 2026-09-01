@@ -1,22 +1,21 @@
 // Chunked getLogs that respects Unichain Sepolia's 10k-block range cap.
 //
-// This used to walk a rolling 200k-block window one request at a time. Both
-// halves of that were wrong.
+// This used to walk a rolling 200k-block window one request at a time, and /lp
+// reloaded the document every 20s. Twenty-two sequential windows is ~19s, so the
+// reload aborted the scan a beat before it resolved — every load, forever. The
+// page had its data and destroyed it on a timer.
 //
-// The window was arbitrary: the interesting range is "since the hook was
-// deployed", which is a fixed lower bound, not a distance behind the head. A
-// rolling window silently starts dropping the earliest settlements the moment
-// the chain outruns it — and it scans a stretch of chain older than the
-// contract on every single load until it does.
+// Two rules this file now holds to, both learned from that bug:
 //
-// Sequential was worse. Twenty-two windows at ~880ms is ~19s, and /lp used to
-// reload itself every 20s, so the scan was aborted a beat before it resolved,
-// every time, forever. The page could not display a settlement it had in fact
-// fetched. Bounded parallelism turns that into ~3s.
+//   1. A window that could not be read is COUNTED, never swallowed. The old
+//      version had a bare `catch {}`, so a provider having a bad minute produced
+//      a confidently wrong total instead of a number the caller could caveat.
 //
-// Failures are returned rather than swallowed. The old version had a bare
-// `catch {}` on the retry path, so a provider having a bad minute produced a
-// confidently wrong total instead of a number the page could caveat.
+//   2. There is no silent fallback. A rolling window used to stand in whenever
+//      the anchor looked wrong, which reads as prudent and is not: if the anchor
+//      is wrong the rolling scan is wrong too, and it fails by rendering a
+//      plausible zero rather than by saying anything. A visible error beats a
+//      fabricated total, so a bad anchor throws.
 
 const CONCURRENCY = 6;
 
@@ -35,31 +34,26 @@ async function mapPool(items, limit, fn) {
 }
 
 /**
+ * Read one event's logs over [fromBlock, latest] in provider-sized windows.
+ *
+ * `latest` is passed in rather than fetched here so that concurrent scans share
+ * one head — two scans resolving against two different heads would compare
+ * totals drawn from different chain states.
+ *
  * @returns {Promise<{logs: object[], failed: number, windows: number}>}
- *   `logs` is in ascending block order. `failed` counts windows that could not
- *   be read at all, which means `logs` is incomplete and any total derived from
- *   it is a lower bound.
+ *   `logs` ascending by block. `failed` counts windows that could not be read at
+ *   all; when it is non-zero `logs` is incomplete and any total derived from it
+ *   is a lower bound. The caller is expected to say so.
  */
-export async function getLogsChunked(
-  pub,
-  { address, event, fromBlock = 0n, lookback = 200_000, chunk = 9_500 },
-) {
-  const latest = await pub.getBlockNumber();
-
-  // fromBlock is the contract's deployment block when we know it. Fall back to
-  // the rolling window if it is missing or implausible (a redeployed hook whose
-  // block was never updated would otherwise scan from the wrong era, or from
-  // ahead of the head and find nothing).
-  const anchor =
-    fromBlock > 0n && fromBlock <= latest
-      ? fromBlock
-      : latest > BigInt(lookback)
-        ? latest - BigInt(lookback)
-        : 0n;
+export async function getLogsChunked(pub, { address, event, fromBlock, latest, chunk = 9_500 }) {
+  if (typeof fromBlock !== "bigint" || fromBlock < 0n) {
+    throw new Error(`getLogsChunked: unusable fromBlock (${fromBlock}). Check NEXT_PUBLIC_HOOK_BLOCK.`);
+  }
+  if (fromBlock > latest) return { logs: [], failed: 0, windows: 0 }; // nothing new since the last scan
 
   const step = BigInt(chunk) + 1n;
   const windows = [];
-  for (let from = anchor; from <= latest; from += step) {
+  for (let from = fromBlock; from <= latest; from += step) {
     windows.push([from, from + BigInt(chunk) > latest ? latest : from + BigInt(chunk)]);
   }
 
@@ -72,15 +66,17 @@ export async function getLogsChunked(
     } catch {
       // Shrink and retry: some providers cap by response size rather than by
       // range, so a narrower window can succeed where the full one did not.
+      // Serialised, not Promise.all'd — a worker slot must never hold two
+      // requests, or a rate-limit burst that drops all six workers into this
+      // path at once would put twelve extra requests on the wire at the exact
+      // moment the endpoint is already refusing them.
       const mid = from + (to - from) / 2n;
       try {
-        const [a, b] = await Promise.all([read(from, mid), read(mid + 1n, to)]);
+        const a = await read(from, mid);
+        const b = await read(mid + 1n, to);
         return [...a, ...b];
       } catch {
-        // One more attempt after a pause. Twelve concurrent requests against a
-        // public endpoint means the occasional dropped connection is normal
-        // rather than exceptional, and a blip should not cost the page a window
-        // for the next twenty seconds.
+        // One more attempt after a pause, for the ordinary dropped connection.
         await new Promise((r) => setTimeout(r, 600));
         try {
           return await read(from, to);
@@ -91,8 +87,8 @@ export async function getLogsChunked(
     }
   });
 
-  // Placed by window index, so concatenating in order preserves block order
-  // even though the requests resolved out of order.
+  // Placed by window index, so concatenating in order preserves block order even
+  // though the requests resolved out of order.
   const logs = [];
   let failed = 0;
   for (const r of results) {
@@ -100,4 +96,16 @@ export async function getLogsChunked(
     else logs.push(...r);
   }
   return { logs, failed, windows: windows.length };
+}
+
+/** Retry a single RPC read once. The head lookup gates every window behind it,
+ *  so leaving it as the one unprotected call would let a single dropped request
+ *  cost the page a whole refresh cycle. */
+export async function withRetry(fn, pauseMs = 600) {
+  try {
+    return await fn();
+  } catch {
+    await new Promise((r) => setTimeout(r, pauseMs));
+    return fn();
+  }
 }

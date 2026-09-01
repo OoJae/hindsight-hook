@@ -1,9 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatUnits } from "viem";
 import { pub } from "../../../lib/clients";
 import { HOOK, HOOK_BLOCK, hookAbi } from "../../../lib/config";
-import { getLogsChunked } from "../../../lib/logs";
+import { getLogsChunked, withRetry } from "../../../lib/logs";
 
 // Presentation only. formatUnits has already done the arithmetic; this trims the
 // STRING it handed back and never touches a BigInt. Eighteen decimals under a
@@ -22,17 +22,31 @@ function amount(s) {
 export default function LpPage() {
   const [settles, setSettles] = useState([]);
   const [flushes, setFlushes] = useState([]);
-  const [state, setState] = useState("loading");   // loading | ready | partial | error
+  // loading — no complete read has landed yet, so there are no figures to show
+  // ready   — a complete read; the figures are the whole truth
+  // partial — some windows were unreadable; the figures are a lower bound
+  // stale   — a refresh degraded, so the LAST GOOD figures are still on screen
+  // error   — could not read at all
+  const [status, setStatus] = useState("loading");
+  const scanned = useRef(null);   // head of the last complete scan, for incremental refresh
 
   // This used to be an initial fetch plus setInterval(location.reload, 20_000).
-  // The scan takes longer than twenty seconds, so the reload aborted it a beat
+  // The scan took longer than twenty seconds, so the reload aborted it a beat
   // before it resolved and the page never rendered a settlement in its life. It
-  // now refreshes in place, and a run that is still going is never overlapped by
-  // the next tick.
+  // refreshes in place now, and a run still in flight is never overlapped.
   useEffect(() => {
     if (!HOOK) return;
     let stop = false;
     let running = false;
+
+    const keyOf = (e) => `${e.blockNumber}-${e.logIndex}`;
+    const merge = (prev, next) => {
+      const m = new Map(prev.map((e) => [keyOf(e), e]));
+      for (const e of next) m.set(keyOf(e), e);
+      return [...m.values()].sort((a, b) =>
+        a.blockNumber === b.blockNumber ? a.logIndex - b.logIndex : a.blockNumber < b.blockNumber ? -1 : 1,
+      );
+    };
 
     const run = async () => {
       if (running) return;
@@ -40,17 +54,62 @@ export default function LpPage() {
       try {
         const settledEvent = hookAbi.find((x) => x.type === "event" && x.name === "Settled");
         const flushEvent = hookAbi.find((x) => x.type === "event" && x.name === "DonationFlushed");
+
+        // One head for both scans: two scans resolving against two different
+        // heads would produce totals drawn from different chain states. Retried,
+        // because every window is gated behind it and it was the one call in the
+        // path with no second chance.
+        const latest = await withRetry(() => pub.getBlockNumber());
+
+        if (HOOK_BLOCK === null) throw new Error("NEXT_PUBLIC_HOOK_BLOCK is not a block number");
+        if (HOOK_BLOCK > latest) throw new Error(`HOOK_BLOCK ${HOOK_BLOCK} is ahead of head ${latest}`);
+
+        // Settled history is immutable, so after one complete scan the later
+        // ticks only need the new tail. REORG_SLACK re-reads a little of what we
+        // already have; the merge is keyed by block+logIndex, so re-reading is
+        // free and a shallow reorg cannot leave a duplicate behind.
+        const REORG_SLACK = 200n;
+        const from =
+          scanned.current === null
+            ? HOOK_BLOCK
+            : scanned.current + 1n > REORG_SLACK
+              ? scanned.current + 1n - REORG_SLACK
+              : HOOK_BLOCK;
+
         const [settled, flushed] = await Promise.all([
-          getLogsChunked(pub, { address: HOOK, event: settledEvent, fromBlock: HOOK_BLOCK }),
-          getLogsChunked(pub, { address: HOOK, event: flushEvent, fromBlock: HOOK_BLOCK }),
+          getLogsChunked(pub, { address: HOOK, event: settledEvent, fromBlock: from, latest }),
+          getLogsChunked(pub, { address: HOOK, event: flushEvent, fromBlock: from, latest }),
         ]);
         if (stop) return;
-        setSettles(settled.logs.slice().reverse());
-        setFlushes(flushed.logs.slice().reverse());
-        setState(settled.failed + flushed.failed > 0 ? "partial" : "ready");
+
+        const failed = settled.failed + flushed.failed;
+        const incremental = scanned.current !== null;
+
+        if (failed > 0 && !incremental) {
+          // First read, and it has holes. Show what we have, labelled — a
+          // partial total is worth more than an empty page, but only if it says
+          // it is partial.
+          setSettles(settled.logs.slice().reverse());
+          setFlushes(flushed.logs.slice().reverse());
+          setStatus("partial");
+          return;
+        }
+        if (failed > 0) {
+          // A refresh degraded. Keep the last good figures rather than letting an
+          // incomplete read overwrite a complete one — clobbering here would put
+          // the page back to the "0 settlements" it was just fixed to stop
+          // showing, off a single dropped request.
+          setStatus("stale");
+          return;
+        }
+
+        setSettles((prev) => merge(incremental ? [...prev].reverse() : [], settled.logs).reverse());
+        setFlushes((prev) => merge(incremental ? [...prev].reverse() : [], flushed.logs).reverse());
+        scanned.current = latest;
+        setStatus("ready");
       } catch (e) {
         console.error(e);
-        if (!stop) setState("error");
+        if (!stop) setStatus(scanned.current === null ? "error" : "stale");
       } finally {
         running = false;
       }
@@ -76,6 +135,26 @@ export default function LpPage() {
   const totalRefunded = settles.reduce((a, e) => a + e.args.refund, 0n);
   const totalFlushed = flushes.reduce((a, e) => a + e.args.amount0 + e.args.amount1, 0n);
   const toxicCount = settles.filter((e) => e.args.toxic).length;
+
+  // Has a read actually landed? Until one has, formatUnits(0n) renders a
+  // confident "0" under "value clawed back from toxic flow" — a fabricated
+  // figure for a pool that has recaptured real value, and the loudest thing on
+  // the page. The state machine used to gate only the count line below the grid,
+  // which is the one place the reader looks last.
+  const hasFigures = status === "ready" || status === "partial" || status === "stale";
+  const lowerBound = status === "partial" || status === "stale";
+
+  // A withheld figure is set the way /toxicity withholds its bond and the way
+  // the landing hero withholds its verdict: mono em dash, not a display zero.
+  const Figure = ({ value, className = "big" }) =>
+    hasFigures ? (
+      <div className={className}>
+        {lowerBound && <span className="dim">≥ </span>}
+        {amount(formatUnits(value, 18))}
+      </div>
+    ) : (
+      <div className="big warn">—</div>
+    );
 
   return (
     <>
@@ -114,19 +193,19 @@ export default function LpPage() {
           {/* The recapture figure. evidence.css paints this same number --signal
               via .fig ("53.8% of realized adverse selection recovered"), so it is
               .ok here for the same reason: a recapture is the mechanism working. */}
-          <div className="big ok">{amount(formatUnits(totalForfeited, 18))}</div>
+          <Figure value={totalForfeited} className="big ok" />
         </div>
         <div className="card">
           <div className="label">refunded to benign traders</div>
           {/* Left at --ink. The recapture figure beside it already carries the
               strip's one accent, and two signal numbers side by side would read
               as decoration rather than as the headline. */}
-          <div className="big">{amount(formatUnits(totalRefunded, 18))}</div>
+          <Figure value={totalRefunded} className="big" />
         </div>
         <div className="card">
           {/* Left at --ink. Three loud figures would read as three accents. */}
           <div className="label">dripped to in-range LPs</div>
-          <div className="big">{amount(formatUnits(totalFlushed, 18))}</div>
+          <Figure value={totalFlushed} className="big" />
         </div>
       </div>
 
@@ -141,16 +220,17 @@ export default function LpPage() {
           with windows missing produces a total that is only a lower bound, so
           it says so instead of quietly under-reporting. */}
       <div className="label">
-        {state === "loading" ? (
-          <>reading the chain <span className="dim">·</span> settlements since deploy</>
-        ) : state === "error" ? (
-          <>could not reach the RPC <span className="dim">·</span> retrying</>
-        ) : (
+        {status === "loading" && <>reading the chain <span className="dim">·</span> settlements since deploy</>}
+        {status === "error" && <>could not reach the RPC <span className="dim">·</span> retrying</>}
+        {(status === "ready" || status === "partial" || status === "stale") && (
           <>
             {settles.length} settlements <span className="dim">·</span> {toxicCount} toxic
             ({settles.length ? Math.round((100 * toxicCount) / settles.length) : 0}%)
-            {state === "partial" && (
+            {status === "partial" && (
               <> <span className="dim">·</span> partial read, totals are a lower bound</>
+            )}
+            {status === "stale" && (
+              <> <span className="dim">·</span> last refresh was incomplete, showing the previous complete read</>
             )}
           </>
         )}
@@ -171,6 +251,16 @@ export default function LpPage() {
             </tr>
           </thead>
           <tbody>
+            {/* An empty tbody under the Settlements heading reads as "this pool
+                has never settled a swap", which is a different claim from "we
+                have not read it yet". */}
+            {!hasFigures && (
+              <tr>
+                <td colSpan={6} className="muted">
+                  {status === "error" ? "could not reach the RPC" : "reading the chain…"}
+                </td>
+              </tr>
+            )}
             {settles.slice(0, 40).map((e) => (
               <tr key={e.args.swapId.toString()}>
                 <td><span className="num">{e.args.swapId.toString()}</span></td>
