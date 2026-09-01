@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { formatUnits } from "viem";
 import { pub } from "../../../lib/clients";
-import { HOOK, hookAbi } from "../../../lib/config";
+import { HOOK, HOOK_BLOCK, hookAbi } from "../../../lib/config";
 import { getLogsChunked } from "../../../lib/logs";
 
 // Presentation only. formatUnits has already done the arithmetic; this trims the
@@ -22,22 +22,42 @@ function amount(s) {
 export default function LpPage() {
   const [settles, setSettles] = useState([]);
   const [flushes, setFlushes] = useState([]);
+  const [state, setState] = useState("loading");   // loading | ready | partial | error
 
+  // This used to be an initial fetch plus setInterval(location.reload, 20_000).
+  // The scan takes longer than twenty seconds, so the reload aborted it a beat
+  // before it resolved and the page never rendered a settlement in its life. It
+  // now refreshes in place, and a run that is still going is never overlapped by
+  // the next tick.
   useEffect(() => {
     if (!HOOK) return;
     let stop = false;
-    (async () => {
-      const settledEvent = hookAbi.find((x) => x.type === "event" && x.name === "Settled");
-      const flushEvent = hookAbi.find((x) => x.type === "event" && x.name === "DonationFlushed");
-      const [settled, flushed] = await Promise.all([
-        getLogsChunked(pub, { address: HOOK, event: settledEvent }),
-        getLogsChunked(pub, { address: HOOK, event: flushEvent }),
-      ]);
-      if (stop) return;
-      setSettles(settled.reverse());
-      setFlushes(flushed.reverse());
-    })().catch(console.error);
-    const t = setInterval(() => location.reload(), 20_000);
+    let running = false;
+
+    const run = async () => {
+      if (running) return;
+      running = true;
+      try {
+        const settledEvent = hookAbi.find((x) => x.type === "event" && x.name === "Settled");
+        const flushEvent = hookAbi.find((x) => x.type === "event" && x.name === "DonationFlushed");
+        const [settled, flushed] = await Promise.all([
+          getLogsChunked(pub, { address: HOOK, event: settledEvent, fromBlock: HOOK_BLOCK }),
+          getLogsChunked(pub, { address: HOOK, event: flushEvent, fromBlock: HOOK_BLOCK }),
+        ]);
+        if (stop) return;
+        setSettles(settled.logs.slice().reverse());
+        setFlushes(flushed.logs.slice().reverse());
+        setState(settled.failed + flushed.failed > 0 ? "partial" : "ready");
+      } catch (e) {
+        console.error(e);
+        if (!stop) setState("error");
+      } finally {
+        running = false;
+      }
+    };
+
+    run();
+    const t = setInterval(run, 20_000);
     return () => { stop = true; clearInterval(t); };
   }, []);
 
@@ -110,14 +130,30 @@ export default function LpPage() {
         </div>
       </div>
 
-      {/* Counts are not prose. They were fused to the mechanism paragraph above
-          by an em dash and set at the same 13px; as a mono label line they stop
-          jittering on the 20s reload (Plex Mono is fixed-pitch) and the `·` is
-          the site's own separator idiom. Not a <p>, so the deck above keeps the
-          `p.muted:first-of-type` promotion. */}
+      {/* Counts are not prose — as a mono label line they stop jittering on each
+          refresh (Plex Mono is fixed-pitch) and `·` is the site's own separator.
+          Not a <p>, so the deck above keeps the `p.muted:first-of-type`
+          promotion.
+
+          The scan state is printed here rather than left implicit. "0
+          settlements" while the scan is still running is not a loading state,
+          it is a wrong answer that happens to be rendered early — and a scan
+          with windows missing produces a total that is only a lower bound, so
+          it says so instead of quietly under-reporting. */}
       <div className="label">
-        {settles.length} settlements <span className="dim">·</span> {toxicCount} toxic
-        ({settles.length ? Math.round((100 * toxicCount) / settles.length) : 0}%)
+        {state === "loading" ? (
+          <>reading the chain <span className="dim">·</span> settlements since deploy</>
+        ) : state === "error" ? (
+          <>could not reach the RPC <span className="dim">·</span> retrying</>
+        ) : (
+          <>
+            {settles.length} settlements <span className="dim">·</span> {toxicCount} toxic
+            ({settles.length ? Math.round((100 * toxicCount) / settles.length) : 0}%)
+            {state === "partial" && (
+              <> <span className="dim">·</span> partial read, totals are a lower bound</>
+            )}
+          </>
+        )}
       </div>
 
       <h2>Settlements</h2>

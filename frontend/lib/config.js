@@ -5,6 +5,20 @@ export const TOKEN1 = process.env.NEXT_PUBLIC_TOKEN1;
 export const SWAP_ROUTER = process.env.NEXT_PUBLIC_SWAP_ROUTER;
 export const POOL_ID = process.env.NEXT_PUBLIC_POOL_ID;
 
+// The block the live hook was deployed in, found by binary-searching eth_getCode
+// (see DEPLOYMENTS.md). Event scans anchor here instead of a rolling window: the
+// range of interest is "since this contract existed", which is a fixed lower
+// bound. Override when the hook address changes; lib/logs.js falls back to a
+// rolling lookback if this is unset or ahead of the chain head, so a stale value
+// degrades to the old behaviour rather than to an empty page.
+export const HOOK_BLOCK = (() => {
+  try {
+    return BigInt(process.env.NEXT_PUBLIC_HOOK_BLOCK ?? "61282455");
+  } catch {
+    return 0n; // unparseable override → lib/logs.js uses the rolling window
+  }
+})();
+
 export const POOL_KEY = {
   currency0: TOKEN0,
   currency1: TOKEN1,

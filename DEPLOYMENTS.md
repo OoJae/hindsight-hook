@@ -110,6 +110,7 @@ that is its own input.
 | Settlement horizon (live) | maturity **50** + window **25** flashblocks (~10s + 5s) |
 | **HindsightCallback v8** (Reactive dest) | `0xF6Dad7BB03a9cf89f4E3b98912Aea695F6b27227` |
 | Clock: official FlashblockNumber | `0x056466f1a50a6B5e4DCCF106074ee0083D721a42` (live, 200ms) |
+| Hook deployment block | **61282455** — found by binary-searching `eth_getCode`; it was not recorded anywhere, and the frontend needed it to anchor event scans (`NEXT_PUBLIC_HOOK_BLOCK`). Update it whenever the hook address changes. |
 | Reactive callback proxy | `0x9299472A6399Fd1027ebF067571Eb3e3D7837FC4` |
 | Owner (admin, 2-step transferable) | `0x5d4E95E57cf3369E31E6a50D7C4fECB04177226f` |
 
