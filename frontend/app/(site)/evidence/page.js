@@ -35,7 +35,7 @@ export default function Evidence() {
             Seven days of Unichain mainnet ETH/USDC — 55,822 swaps — re-priced through the exact
             on-chain logic. No simulated agents, no assumed behaviour. Every number below
             regenerates from a file committed to the repo, with no RPC:{" "}
-            <code className="mono">cd backtest &amp;&amp; python compare.py</code>.
+            <code className="mono">cd backtest &amp;&amp; python3 -m venv .venv &amp;&amp; .venv/bin/pip install matplotlib &amp;&amp; .venv/bin/python compare.py</code>.
           </p>
         </div>
       </section>
@@ -138,7 +138,7 @@ export default function Evidence() {
           <p className="act-body ev-tail fade" style={{ "--rv-delay": "400ms" }}>
             What replaced the first retraction is the test that actually holds. Charge measured
             on the first half of the week predicts which <em>addresses</em> adversely select in
-            the second: Spearman <span className="num">+0.735</span>, permutation{" "}
+            the second: Spearman <span className="num">+0.739</span>, permutation{" "}
             <span className="num">p = 0.0005</span>. The addresses we charged most went on to
             impose <span className="num">6.43 bps</span> of adverse selection; the ones we
             charged least, <span className="num">0.43</span>. Small sample, stated plainly: only

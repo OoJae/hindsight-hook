@@ -33,9 +33,10 @@ v8 closes round 3. Every finding across all three rounds has an executable repro
 ### Round 3 — what a third adversarial pass found in v7
 
 Six attack lanes, refute-by-default verification (two skeptics per finding, defaulting to
-*refuted*), then a completeness critic. 25 raw findings → 14 verified → 13 survived. Report in
-`../AUDIT-REPORT-3.md`. The shape of it: v7 froze θ because a mutable θ made the verdict
-retroactive — and froze exactly *one* of the four inputs to a verdict.
+*refuted*), then a completeness critic. 25 raw findings → 14 verified → 13 survived. The
+findings are tabulated below; the full internal report is not published. The shape of it: v7
+froze θ because a mutable θ made the verdict retroactive — and froze exactly *one* of the four
+inputs to a verdict.
 
 | # | Finding | Fix |
 |---|---|---|
@@ -89,10 +90,12 @@ not because a clamp was tightened, but because there is nothing left for the tra
 into. `k` was recalibrated 2.8 → 1.4 for the new σ; `θ_min` stays at 3 because it also sizes
 the bond cap via `_bondCap`. Same aggressiveness (21.7% vs 21.6% flagged), same recovery
 (ρ 46.5% vs 46.8%), better classification, and a **stronger** permutation null (z = +5.19 vs
-+4.99).
++4.99). *Those four figures are as computed under the float-θ model of the time; round-3
+finding G3 replaced it with the contract's integer θ, under which the current numbers are
+ρ = 53.8% and z = +6.14 — see README §0–§1. The v6→v7 comparison they make is unchanged.*
 
 Honest cost, published rather than buried: the in-window sourcing genuinely did buy better
-false-positive protection in the top volatility decile (7.8% vs 14.2%), and the trailing one
+false-positive protection in the top volatility decile (27.1% vs 48.5% on its own axis), and the trailing one
 does **not** reproduce that. We took the trade anyway, because that protection was bought
 with a threshold a trader can move — see the 927 acquittals above. `compare.py` §4 prints the
 decile table on *both* volatility axes, because each estimator flatters itself on the axis
@@ -116,9 +119,10 @@ that is its own input.
 
 **Settlement horizon (Aug 30):** both pools run a **10s + 5s** horizon, set through the
 bounded `setParams` rather than a redeploy. Reason: our round-2 audit's permutation null
-showed the original 3s+2s horizon does not beat random-label chance (z = −1.68), because
-sub-5s post-swap drift is dominated by a trade's own price impact rather than by
-information. At 10s+5s the true labels beat the null by **+4.5σ**. This is also the first
+showed the original 3s+2s horizon does not beat random-label chance (z = −0.42 under the
+current integer-θ model; −1.68 when the decision was made), because sub-5s post-swap drift is
+dominated by a trade's own price impact rather than by information. At 10s+5s the true labels
+beat the null by **+6.14σ** (README §0 prints the full horizon table). This is also the first
 real exercise of the bounded-owner design: *lengthening* a horizon is exactly the direction
 the M6 ratchet permits, because it can only ever push a settlement deadline later — never
 pull one in under an already-escrowed bond.
@@ -197,8 +201,7 @@ is deployed with `flashblockNumber = address(0)` and runs the `block.number × 1
 clock. Full cycle proven live: retail swap → observation stamped at `461836920` (a derived
 stamp, not a flashblock) → `checkUpkeep(settle)` flipped **false → true** on-chain as the
 window closed → `settle(0)` → **status Refunded**, the entire 0.0024987 dETH bond returned
-to the trader in tx
-a `settle(0)` that returned the full 0.0024987 dETH bond.
+to the trader (verifiable with the `cast call` sequence in README § Partner integrations).
 The same hook bytecode therefore works on a chain with 200ms flashblocks and on one with
 2s blocks and no flashblock contract at all.
 
@@ -233,7 +236,7 @@ resolved to its deployed address `0xcc0d06b6a1794bf90ce44ab73d48a57cfe707908`. B
 link the *same* library address on both chains. Nothing else is allowed to differ.
 
 The hook is 24,549 bytes against the 24,576-byte EIP-170 limit — **27 bytes of headroom**.
-That constraint shapes real decisions: `optimizer_runs` is 50 rather than 800;
+That constraint shapes real decisions: `optimizer_runs` is 50 rather than the default 200;
 `finalizeBatch` and `forceClockFallback` were removed rather than kept (`finalize` is
 already called implicitly by `settle`/`settleOne`, and a manual clock override was a
 liability we did not need); and the reputation-curve constants are `internal` rather than

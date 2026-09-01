@@ -468,8 +468,10 @@ def vol_decile(rows, res):
     print(f"    static {fp_all(stat_res):.1f}%   in-window {fp_all(win_res):.1f}%   "
           f"trailing {fp_all(res):.1f}%")
     print()
+    _fps = (fp_all(stat_res), fp_all(win_res), fp_all(res))
     print("  Read honestly: each estimator looks best on the axis that is its own input, and")
-    print("  on the unconditioned rate the three are within 0.3pp. The vol term's top-decile")
+    print(f"  on the unconditioned rate the three span {max(_fps) - min(_fps):.1f}pp, with the")
+    print("  trailing sigma the highest -- it does not win this table. The vol term's top-decile")
     print("  protection is real for the IN-WINDOW sourcing and is NOT fully reproduced by the")
     print("  trailing one. We ship the trailing sigma anyway, because that protection was")
     print("  bought with a threshold a trader can move: see section 9, where 927 real swaps")
@@ -481,19 +483,23 @@ def sensitivity(rows):
     section("5. PARAMETER SENSITIVITY — is the mechanism perched on a cliff?")
     hdr = "k \\ theta_min"
     print(f"{hdr:>14}" + "".join(f"{t:>14}" for t in (3, 6, 12)))
+    grid = {}
     for k in (0.7, 1.4, 2.8, 5.6):
         cells = []
         for tmin in (3, 6, 12):
             r = price(rows, theta_min=float(tmin), k=k)
             claw = sum(x["forfeit"] for x in r)
+            grid[(k, tmin)] = claw
             tox = 100 * sum(1 for x in r if x["toxic"]) / len(r)
             cells.append(f"{money(claw)}/{tox:.1f}%")
         star = "  <- shipped" if k == THETA_K else ""
         print(f"{k:>14}" + "".join(f"{c:>16}" for c in cells) + star)
     print("\n  cells: clawback / share of swaps flagged toxic")
     print("  Smooth and monotone in both axes — no cliffs, no pathological regions.")
-    print("  HONEST NOTE: theta_min still dominates k on this tape -- 3->12 ticks cuts the")
-    print("  clawback ~64%, while k 0.7->5.6 cuts it ~50%. And section 4 shows the k term no")
+    _tm = 100 * (1 - grid[(THETA_K, 12)] / grid[(THETA_K, 3)])
+    _kk = 100 * (1 - grid[(5.6, 3)] / grid[(0.7, 3)])
+    print(f"  HONEST NOTE: theta_min still dominates k on this tape -- 3->12 ticks cuts the")
+    print(f"  clawback ~{_tm:.0f}%, while k 0.7->5.6 cuts it ~{_kk:.0f}%. And section 4 shows the k term no")
     print("  longer buys the top-decile protection it did when sigma came from the settlement")
     print("  window. We keep it because section 6 says it classifies better, and because a")
     print("  threshold in absolute ticks is fitted to one pool's volatility level, whereas a")
@@ -757,8 +763,26 @@ def corr_test(rows, res):
     print(f"     H2 adverse selection of the addresses charged LEAST in H1: {lo_bps:5.2f} bps")
     print(f"     separation: {hi_bps / max(lo_bps, 1e-9):.1f}x")
     print()
-    print("     Stable across thresholds (>=5/10/20/50 swaps: rho 0.75/0.67/0.74/0.94, p<=0.0005).")
-    print("     Small n is the honest caveat: only 34 addresses trade this pool in both halves.")
+    # Computed, not quoted. These two lines used to be string literals -- the same failure
+    # class as the retracted "0.0% by construction" headline -- and the README cited them
+    # as measurements.
+    sweep = []
+    for m in (5, 10, 20, 50):
+        cm = [s for s in A if s in B and A[s]["n"] >= m and B[s]["n"] >= m]
+        xs = [A[s]["chg"] / A[s]["usd"] for s in cm]
+        y0 = [B[s]["mk"] / B[s]["usd"] for s in cm]
+        o = spear(xs, y0)
+        r2 = random.Random(11); h = 0
+        for _ in range(T):
+            yy = y0[:]; r2.shuffle(yy)
+            if spear(xs, yy) >= o:
+                h += 1
+        sweep.append((m, len(cm), o, (h + 1) / (T + 1)))
+    print("     Across thresholds (min swaps per address in EACH half -> n, rho, permutation p):")
+    for m, n_, o, pv in sweep:
+        print(f"       >={m:<3d} n={n_:<3d} rho={o:+.3f}  p={pv:.4f}")
+    n5 = next(n_ for m, n_, _, _ in sweep if m == 5)
+    print(f"     Small n is the honest caveat: only {n5} addresses trade this pool in both halves (>=5 each).")
     print("     This is the claim the mechanism actually makes -- it identifies the flow that")
     print("     keeps adversely selecting -- and it is the one that survives out of sample.")
 
