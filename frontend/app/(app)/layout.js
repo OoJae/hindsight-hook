@@ -1,56 +1,75 @@
-import Link from "next/link";
+"use client";
 
-// The product chrome. Lifted verbatim from the old root layout so the four
-// tool pages are untouched by the marketing work; only the nav targets moved
-// (`/` is now the landing page, the swap tool lives at `/swap`).
-const css = `
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: #0b0e14; color: #e6e9ef; font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; }
-  a { color: #7aa2ff; text-decoration: none; }
-  nav { display: flex; gap: 20px; padding: 18px 28px; border-bottom: 1px solid #1d2330; align-items: baseline; }
-  nav .brand { font-weight: 700; font-size: 18px; color: #fff; margin-right: 12px; }
-  main { max-width: 860px; margin: 0 auto; padding: 32px 20px 80px; }
-  .card { background: #121826; border: 1px solid #1d2330; border-radius: 12px; padding: 20px; margin: 16px 0; }
-  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-  input, select { background: #0b0e14; color: #e6e9ef; border: 1px solid #2a3245; border-radius: 8px; padding: 10px 12px; font-size: 15px; }
-  button { background: #3b62f6; color: #fff; border: 0; border-radius: 8px; padding: 10px 18px; font-size: 15px; cursor: pointer; }
-  button:disabled { opacity: 0.45; cursor: default; }
-  button.ghost { background: #1d2330; }
-  .muted { color: #8b93a7; font-size: 13px; }
-  .big { font-size: 26px; font-weight: 700; }
-  .ok { color: #4ade80; } .bad { color: #f87171; } .warn { color: #facc15; }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #1d2330; }
-  .bar { height: 8px; background: #1d2330; border-radius: 4px; overflow: hidden; }
-  .bar > div { height: 100%; background: #3b62f6; transition: width .4s; }
-  code { background: #1d2330; padding: 2px 6px; border-radius: 5px; font-size: 13px; }
-`;
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import Glyph from "../(site)/_components/Glyph";
+import "./app.css";
+
+// The product chrome. This used to inject a whole second design system through
+// <style dangerouslySetInnerHTML> — a different ground, a link blue, a button
+// blue, a system sans stack and 12px radii — and, because it was injected after
+// globals.css, it also shadowed the brand's own body rule on these four routes.
+// It is now a real stylesheet (./app.css) that speaks in the tokens.
+//
+// The bar itself is a sibling of the marketing header rather than a stranger to
+// it: the real Glyph (imported, not a hand-inlined duplicate), the real .lockup,
+// the same mono/uppercase nav at 0.08em, the same a.u underline. It does not
+// clone .siteheader's fixed position and scrim — that treatment exists to float
+// over a 100svh hero, and over a dense control column it would sit on top of
+// the inputs. See app.css for the rest of the reasoning.
+//
+// "use client" is here for usePathname, which marks the current route in the
+// bar — the one --signal item the header is allowed, spent on where you are
+// rather than on a CTA into a place you already stand. It is export-safe: the
+// pathname is known at prerender time and identical on hydration. The four page
+// components were already client components; nothing about their data flow moves.
+
+const ROUTES = [
+  ["/swap", "Swap"],
+  ["/lp", "LP dashboard"],
+  ["/toxicity", "Toxicity"],
+  ["/explorer", "Explorer"],
+];
+
+// next.config sets trailingSlash: true, so the live pathname is "/swap/" while
+// the href is "/swap". Compare them stripped, or nothing ever reads as current.
+const route = (p) => (p.length > 1 ? p.replace(/\/+$/, "") : p);
 
 export default function AppLayout({ children }) {
+  const here = route(usePathname() ?? "");
+
   return (
     <>
-      <style dangerouslySetInnerHTML={{ __html: css }} />
-      <nav>
-        <Link href="/" className="brand">
-          <svg width="17" height="17" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-            <path d="M12 6 H27" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" opacity=".6"/>
-            <path d="M12 6 V10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" opacity=".6"/>
-            <path d="M27 6 V10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" opacity=".6"/>
-            <path d="M2 25 H12 L21 14 H30" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"/>
-            <circle cx="12" cy="25" r="2.8" fill="currentColor"/>
-          </svg>
-          Hindsight
+      <header className="appheader">
+        <Link href="/" className="lockup" aria-label="Hindsight — home">
+          <Glyph size={20} />
+          <span>Hindsight</span>
         </Link>
-        <Link href="/swap">Swap</Link>
-        <Link href="/lp">LP dashboard</Link>
-        <Link href="/toxicity">Toxicity</Link>
-        <Link href="/explorer">Explorer</Link>
-        <span className="muted" style={{ marginLeft: "auto" }}>
+
+        <nav aria-label="Product">
+          {ROUTES.map(([href, label]) => (
+            <Link
+              key={href}
+              className="u"
+              href={href}
+              aria-current={here === href ? "page" : undefined}
+            >
+              {label}
+            </Link>
+          ))}
+        </nav>
+
+        {/* Same job as the site footer's mono strip, and now the same voice. */}
+        <span className="mono appstatus">
           fees decided after the trade · Unichain Sepolia
         </span>
-      </nav>
-      <main>{children}</main>
+      </header>
+
+      {/* The root layout renders <a href="#main" className="skip">, and until
+          now these four routes gave it nowhere to land. */}
+      <main id="main" className="appmain">
+        {children}
+      </main>
     </>
   );
 }

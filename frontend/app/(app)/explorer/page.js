@@ -5,17 +5,23 @@ const STRIDE = 15;   // ... + trailing sigma at offset 14
 const HORIZON_LABELS = ["1+1s", "3+2s", "5+2s", "10+5s", "30+10s", "60+20s"];
 const HEADLINE_BPS = 5;
 
+// A parameter is a ledger row: a mono key on the left, the measured value on the
+// right, filed under a hairline. The <li> is load-bearing — app.css gives every
+// li in the app a top rule and its own padding, so the stack rhythm and the
+// separators come from the sheet rather than from a magic 14px margin here. The
+// readout keeps its <b> (app.css targets `.row > b:last-child` for exactly this
+// element) and gains .num, so the digits stop shuffling under a dragging thumb.
 function Slider({ label, value, min, max, step, onChange, fmt, note }) {
   return (
-    <div style={{ marginBottom: 14 }}>
-      <div className="row" style={{ justifyContent: "space-between", marginBottom: 4 }}>
-        <span>{label}</span>
-        <b>{fmt ? fmt(value) : value}</b>
+    <li>
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <span className="label keep-case">{label}</span>
+        <b className="num">{fmt ? fmt(value) : value}</b>
       </div>
-      <input type="range" min={min} max={max} step={step} value={value} style={{ width: "100%" }}
+      <input type="range" min={min} max={max} step={step} value={value} aria-label={label}
              onChange={(e) => onChange(Number(e.target.value))} />
-      {note && <div className="muted" style={{ fontSize: 12 }}>{note}</div>}
-    </div>
+      {note && <div className="mono keep-case">{note}</div>}
+    </li>
   );
 }
 
@@ -113,119 +119,171 @@ export default function Explorer() {
   const isDefault = thetaMin === 3 && k === 1.4 && ramp === 20 && bondBps === 25 && hz === 3
     && sigmaSrc === "trailing";
 
-  if (err) return <div className="card">Failed to load dataset: {err}</div>;
+  // Both guards render as .appmain > .card:only-child — app.css drops the fill and
+  // sets them as a mono line between two rules. The failure is the one thing here
+  // that is an interface fault rather than a verdict, so it takes .is-err: promoted
+  // to --ink against an ink rule, which is the loudest move the palette has. No red.
+  if (err) return (
+    <div className="card">
+      <p className="warn is-err">Failed to load dataset: {err}</p>
+    </div>
+  );
   if (!stats) return <div className="card">Loading 55,822 real mainnet swaps…</div>;
 
   const f0 = (x) => `$${x.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
   // null == the statistic is undefined at this slider position (see dynDegenerate).
   const fx = (x, d = 1, suffix = "") => (x == null ? "n/a" : x.toFixed(d) + suffix);
+  // A verdict colour must never land on a statistic that does not exist: "n/a" in
+  // --signal reads as a success. When the value is null the verdict is withheld,
+  // which is what --muted says on this system (.warn), in mono like its neighbours.
+  const vc = (x, cls) => (x == null ? "num warn" : cls);
 
   return (
     <>
-      <h1>Explorer — don't take our word for it</h1>
+      {/* Stamp then claim. The <em> goes with the weld: it would now wrap the
+          entire heading, and a whole h1 in --signal is not an accent. */}
+      <div className="label">Explorer</div>
+      <h1>Don&rsquo;t take our word for it</h1>
       <p className="muted">
         Every number below is computed <b>in your browser</b>, right now, by re-pricing{" "}
-        <b>{stats.n.toLocaleString()} real Unichain mainnet ETH/USDC swaps</b> ({meta?.days} days)
+        <b><span className="num">{stats.n.toLocaleString()}</span> real Unichain mainnet ETH/USDC swaps</b>{" "}
+        (<span className="num">{meta?.days}</span> days)
         under the parameters you choose. No server, no RPC — this is the same arithmetic the
         hook runs on-chain, applied to trades that actually happened. Move a slider and try to
         break the result.
       </p>
 
-      <p className="muted" style={{ fontSize: 13, marginTop: -6 }}>
+      <p className="muted">
         Precision note: the tape ships as float32 to keep the download small, so figures here
-        can differ from <code>backtest/compare.py</code> in the last ~0.5% (e.g. 12.11 vs 12.18
-        bps). The Python suite on the full-precision CSV is the number of record; this is a
+        can differ from <code>backtest/compare.py</code> in the last{" "}
+        <span className="num">~0.5%</span> (e.g. <span className="num">12.11 vs 12.18 bps</span>).
+        The Python suite on the full-precision CSV is the number of record; this is a
         faithful, checkable approximation of it.
       </p>
 
-      <div className="row" style={{ alignItems: "flex-start", gap: 24 }}>
-        <div className="card" style={{ flex: "1 1 320px" }}>
-          <div className="row" style={{ justifyContent: "space-between" }}>
-            <b>Parameters</b>
-            <button className="ghost" onClick={reset} disabled={isDefault}>
-              {isDefault ? "= deployed hook" : "reset to deployed"}
-            </button>
-          </div>
-          <div style={{ marginTop: 14 }}>
-            <Slider label="θ floor (ticks ≈ bps)" value={thetaMin} min={1} max={20} step={1}
-                    onChange={setThetaMin} note="below this markout, flow is always benign" />
-            <Slider label="k — volatility scaling" value={k} min={0} max={8} step={0.1}
-                    onChange={setK} fmt={(v) => v.toFixed(1)}
-                    note="θ = floor + k · realized vol. k=0 makes the threshold static." />
-            <Slider label="forfeit ramp (ticks)" value={ramp} min={5} max={80} step={5}
-                    onChange={setRamp} note="markout beyond θ+ramp forfeits the full bond" />
-            <Slider label="bond (bps of notional)" value={bondBps} min={5} max={100} step={5}
-                    onChange={setBondBps} />
-            <Slider label="settlement horizon" value={hz} min={1} max={5} step={1}
-                    onChange={setHz} fmt={(v) => HORIZON_LABELS[v]}
-                    note="maturity + TWAP window" />
-            <div style={{ marginTop: 18 }}>
-              <div className="row" style={{ justifyContent: "space-between", marginBottom: 6 }}>
-                <b style={{ fontSize: 13 }}>where &sigma; comes from</b>
-                <span className="muted" style={{ fontSize: 12 }}>
-                  {sigmaSrc === "trailing" ? "trailing 120s (v7)" : "settlement window (v6)"}
-                </span>
-              </div>
-              <div className="row" style={{ gap: 8 }}>
-                <button className={sigmaSrc === "trailing" ? "" : "ghost"}
-                        onClick={() => { setSigmaSrc("trailing"); setK(1.4); }}>before the trade</button>
-                <button className={sigmaSrc === "window" ? "" : "ghost"}
-                        onClick={() => { setSigmaSrc("window"); setK(2.8); }}>the settlement window</button>
-              </div>
-              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                v6 measured &sigma; over the same window it measured the markout, so a trader&apos;s
-                own companion prints raised the bar it was judged against — 927 swaps on this
-                tape were acquitted that way. v7 measures &sigma; over a window that closes
-                before the trade lands. Each source carries its own calibrated k (1.4 vs 2.8)
-                so the two flag the same share of flow — otherwise the comparison would just
-                be measuring which one is set more aggressively.
-              </div>
+      {/* Two columns, and the wrappers are deliberate: with a bare .card as a direct
+          child app.css treats a .row as a seamed KPI strip (gap 0, margins killed),
+          which is the wrong object here — this is a control panel beside a result,
+          not one strip. Wrapping each column keeps the cards' own margins, so both
+          columns start on the same line, and the gap is a clamp off the type scale
+          rather than a hardcoded 24. */}
+      <div className="row" style={{ margin: 0, alignItems: "flex-start", gap: "clamp(1rem, 2.5vw, 2rem)" }}>
+        <div style={{ flex: "1 1 20rem", minWidth: 0 }}>
+          <div className="card">
+            <div className="row" style={{ justifyContent: "space-between", borderBottom: "var(--rule)", paddingBottom: "0.75rem" }}>
+              <span className="label keep-case">Parameters</span>
+              <button className="ghost" onClick={reset} disabled={isDefault}>
+                {isDefault ? "= deployed hook" : "reset to deployed"}
+              </button>
             </div>
+            {/* The parameter stack is a list, so app.css's li rule supplies the
+                hairline between every parameter and the space around it. */}
+            <ul>
+              <Slider label="θ floor (ticks ≈ bps)" value={thetaMin} min={1} max={20} step={1}
+                      onChange={setThetaMin} note="below this markout, flow is always benign" />
+              <Slider label="k — volatility scaling" value={k} min={0} max={8} step={0.1}
+                      onChange={setK} fmt={(v) => v.toFixed(1)}
+                      note="θ = floor + k · realized vol. k=0 makes the threshold static." />
+              <Slider label="forfeit ramp (ticks)" value={ramp} min={5} max={80} step={5}
+                      onChange={setRamp} note="markout beyond θ+ramp forfeits the full bond" />
+              <Slider label="bond (bps of notional)" value={bondBps} min={5} max={100} step={5}
+                      onChange={setBondBps} />
+              <Slider label="settlement horizon" value={hz} min={1} max={5} step={1}
+                      onChange={setHz} fmt={(v) => HORIZON_LABELS[v]}
+                      note="maturity + TWAP window" />
+              {/* σ source is another parameter, so it is another row in the same
+                  stack — the hairline above it comes from the same li rule that
+                  separates the sliders, not from an 18px margin. */}
+              <li>
+                <div className="row" style={{ justifyContent: "space-between" }}>
+                  <span className="label keep-case">where &sigma; comes from</span>
+                  <span className="mono keep-case">
+                    {sigmaSrc === "trailing" ? "trailing 120s (v7)" : "settlement window (v6)"}
+                  </span>
+                </div>
+                {/* One segmented control, not two pills: gap 0 and a −1px pull so the
+                    pair shares a single hairline. Selection is already encoded as
+                    "no class vs .ghost", which app.css renders as signal outline vs
+                    hairline; aria-pressed states the same thing to a screen reader. */}
+                <div className="row" style={{ gap: 0, marginTop: "0.6rem" }}>
+                  <button className={sigmaSrc === "trailing" ? "" : "ghost"}
+                          aria-pressed={sigmaSrc === "trailing"}
+                          onClick={() => { setSigmaSrc("trailing"); setK(1.4); }}>before the trade</button>
+                  <button className={sigmaSrc === "window" ? "" : "ghost"}
+                          aria-pressed={sigmaSrc === "window"} style={{ marginLeft: -1 }}
+                          onClick={() => { setSigmaSrc("window"); setK(2.8); }}>the settlement window</button>
+                </div>
+                <div className="muted" style={{ marginTop: "0.6rem" }}>
+                  v6 measured &sigma; over the same window it measured the markout, so a
+                  trader&rsquo;s own companion prints raised the bar it was judged against —{" "}
+                  <span className="num">927</span> swaps on this tape were acquitted that way.
+                  v7 measures &sigma; over a window that closes before the trade lands. Each
+                  source carries its own calibrated k (<span className="num">1.4 vs 2.8</span>)
+                  so the two flag the same share of flow — otherwise the comparison would just
+                  be measuring which one is set more aggressively.
+                </div>
+              </li>
+            </ul>
           </div>
         </div>
 
-        <div style={{ flex: "1 1 380px" }}>
+        <div style={{ flex: "1 1 22rem", minWidth: 0 }}>
+          {/* The verdict card, in the same object the landing page uses: a mono
+              caption (case preserved, or ρ uppercases to a Latin-looking Ρ), the
+              figure in the display face, then the supporting line. ρ is .ok, not
+              claw: evidence.css already paints this same number --signal. */}
           <div className="card">
-            <div className="muted">ρ — share of realized adverse selection recovered</div>
-            <div className="big ok">{fx(stats.rho, 1, "%")}</div>
+            <div className="label"><span className="keep-case">ρ</span> — share of realized adverse selection recovered</div>
+            <div className={stats.rho == null ? "big" : "big ok"}>{fx(stats.rho, 1, "%")}</div>
             <div className="muted">
-              {f0(stats.claw)} clawed back of {f0(stats.grossAS)} — {fx(stats.lvrX, 1, "×")} the
-              pool's net LVR bleed, and +{fx(stats.pctFees, 1, "%")} on {f0(stats.fees)} of fees
+              <span className="num">{f0(stats.claw)}</span> clawed back of{" "}
+              <span className="num">{f0(stats.grossAS)}</span> —{" "}
+              <span className="num">{fx(stats.lvrX, 1, "×")}</span> the
+              pool&rsquo;s net LVR bleed, and +<span className="num">{fx(stats.pctFees, 1, "%")}</span>{" "}
+              on <span className="num">{f0(stats.fees)}</span> of fees
             </div>
           </div>
           <div className="card">
-            <div className="muted">who pays, at identical LP revenue</div>
+            <div className="label">who pays, at identical LP revenue</div>
             <table>
               <tbody>
-                <tr><td>benign flow — Hindsight</td><td><b className="ok">{fx(stats.benignEff, 2, " bps")}</b></td></tr>
-                <tr><td>toxic flow — Hindsight</td><td><b className="bad">{fx(stats.toxicEff, 2, " bps")}</b></td></tr>
-                <tr><td className="muted">revenue-matched dynamic fee</td><td className="muted">{stats.dynC == null ? "n/a — no realized vol at this horizon" : `5 + ${stats.dynC.toFixed(2)}·σ bps`}</td></tr>
+                <tr><td>benign flow — Hindsight</td><td><b className={vc(stats.benignEff, "ok")}>{fx(stats.benignEff, 2, " bps")}</b></td></tr>
+                <tr><td>toxic flow — Hindsight</td><td><b className={vc(stats.toxicEff, "bad")}>{fx(stats.toxicEff, 2, " bps")}</b></td></tr>
+                {/* The last three rows are one comparison against the rival, so their
+                    keys are muted and only the values carry the verdict. */}
+                <tr><td className="muted">revenue-matched dynamic fee</td><td className="muted">{stats.dynC == null ? "n/a — no realized vol at this horizon" : <span className="num">5 + {stats.dynC.toFixed(2)}·σ bps</span>}</td></tr>
                 <tr>
-                  <td>…its incremental revenue from <b>benign</b> flow</td>
-                  <td><b className="bad">{fx(stats.dynBenignShare, 1, "%")}</b></td>
+                  <td className="muted">…its incremental revenue from <b>benign</b> flow</td>
+                  <td><b className={vc(stats.dynBenignShare, "bad")}>{fx(stats.dynBenignShare, 1, "%")}</b></td>
                 </tr>
-                <tr><td>…Hindsight's, from benign flow</td><td><b className="ok">0.0%</b></td></tr>
+                <tr><td className="muted">…Hindsight&rsquo;s, from benign flow</td><td><b className="ok">0.0%</b></td></tr>
               </tbody>
             </table>
-            <div className="muted" style={{ marginTop: 8 }}>
-              {stats.toxPct.toFixed(1)}% of swaps flagged ({stats.toxN.toLocaleString()})
+            {/* A summary under a table is a ledger total: it gets the rule, not 8px. */}
+            <div className="muted" style={{ borderTop: "var(--rule)", paddingTop: "0.75rem" }}>
+              <span className="num">{stats.toxPct.toFixed(1)}%</span> of swaps flagged{" "}
+              (<span className="num">{stats.toxN.toLocaleString()}</span>)
             </div>
           </div>
         </div>
       </div>
 
-      <div className="card">
-        <b>Things worth trying</b>
-        <ul className="muted" style={{ marginBottom: 0 }}>
-          <li><b>Set k = 0</b> — a static threshold. ρ barely moves, but the mechanism starts
-            confiscating volatile-but-uninformed flow (that's what the vol-decile chart measures).</li>
-          <li><b>Shorten the horizon</b> — at 3+2s the mechanism stops beating a random-label
-            null (see §0 of the README). That is why we ship 10+5s, and why we publish the null.</li>
-          <li><b>Raise the bond</b> — clawback scales, but benign flow still pays exactly the
-            headline fee, because benign bonds are refunded in full. That is the whole point:
-            the bond is a deposit, not a fee.</li>
-        </ul>
-      </div>
+      {/* The only real section break on the page, so it gets the one thing app.css
+          reserves for one: a rule with a word on it in the display face. Out of the
+          card and onto the page — the instrument is above, this is the ledger, and
+          the three imperatives are hairline-separated rows rather than discs on a
+          40px indent. Measure is set in ch because it is prose, not a panel. */}
+      <h2>Things worth trying</h2>
+      <ul className="muted" style={{ maxWidth: "68ch" }}>
+        <li><b>Set k = 0</b> — a static threshold. ρ barely moves, but the mechanism starts
+          confiscating volatile-but-uninformed flow (that&rsquo;s what the vol-decile chart measures).</li>
+        <li><b>Shorten the horizon</b> — at <span className="num">3+2s</span> the mechanism stops
+          beating a random-label null (see §0 of the README). That is why we ship{" "}
+          <span className="num">10+5s</span>, and why we publish the null.</li>
+        <li><b>Raise the bond</b> — clawback scales, but benign flow still pays exactly the
+          headline fee, because benign bonds are refunded in full. That is the whole point:
+          the bond is a deposit, not a fee.</li>
+      </ul>
     </>
   );
 }

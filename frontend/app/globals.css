@@ -13,7 +13,11 @@
   --ground: #0b0d0e;        /* cool near-black. The pool is not a void.       */
   --ground-lift: #121517;   /* one step up, for surfaces that must separate   */
   --ink: #edeae4;           /* warm paper, not screen-white. This is a record */
-  --muted: #6e7477;         /* axes, labels, the parts that aren't signal     */
+  /* Was #6e7477, which measures 4.11:1 on --ground and 3.87:1 on --ground-lift
+     and so failed AA for body text — and .act-body, the landing page's prose,
+     is set in it. Lifted to 5.42:1 / 5.10:1 at the same hue. One token, so the
+     marketing pages and the app stay the same grey rather than drifting apart. */
+  --muted: #82888b;         /* axes, labels, the parts that aren't signal     */
   --hairline: #22262a;      /* rules, borders, the grid of the ledger         */
 
   --signal: #ccff00;        /* THE accent: live markout, the counter, theta.  */

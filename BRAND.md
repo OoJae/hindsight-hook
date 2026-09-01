@@ -29,17 +29,39 @@ the looking.
 | `--ground` | `#0B0D0E` | Cool near-black. The pool is not a void. |
 | `--ground-lift` | `#121517` | One step up, for surfaces that must separate. |
 | `--ink` | `#EDEAE4` | Warm paper, not screen-white — this is a *record*. |
-| `--muted` | `#6E7477` | Axes, labels, the parts of a chart that aren't signal. |
+| `--muted` | `#82888B` | Axes, labels, the parts of a chart that aren't signal. |
 | `--hairline` | `#22262A` | Rules and borders: the grid of the ledger. |
 | `--signal` | `#CCFF00` | The accent. Live markout, the counter, θ. Reads as instrumentation — a plotter trace — not as a brand colour. |
 | `--claw` | `#FF5A36` | **Three uses on the entire site.** |
 
+`--muted` was `#6E7477` until the app routes were brought onto this system. That value
+measures **4.11:1** on `--ground` and 3.87:1 on `--ground-lift`, so it failed AA for body
+text — and `.act-body`, the landing page's own prose, is set in it. `#82888B` is the same
+hue at **5.42:1 / 5.10:1**. One token rather than an app-scoped override, so the marketing
+pages and the product stay the same grey instead of drifting apart.
+
 ### The three-uses rule
 
-`--claw` marks confiscation and nothing else. It appears on: the forfeited segment of the
-ribbon, a forfeit verdict, and a retracted claim. A colour that appears three times is an
-event; a colour that appears everywhere is a palette. Do not reach for it for warnings,
-errors, or emphasis — use `--muted` or `--ink` for those.
+`--claw` marks confiscation and nothing else — **and only where confiscation has actually
+happened.** Never a projection of one, and never a per-row state. It is currently spent
+twice: a settled forfeit verdict (`/swap`), and a retracted claim (`/evidence`).
+
+The rule survived contact with the app, but only after breaking. Four agents restyling the
+four product routes in parallel each concluded, correctly in isolation, that their own page
+deserved the forfeit slot — three separate files ended up carrying a comment claiming to
+spend "slot 2 and nowhere else", and one of them painted the word *toxic* on up to forty
+rows of a settlements table. Forty orange cells is the definition of a palette. The lesson
+is that a scarcity rule cannot be enforced locally: it is a property of the whole site, so
+it has to be checked against the whole site.
+
+The clawback figure was going to be the third use, until it turned out `evidence.css`
+already paints that exact number — ρ, "53.8% of realized adverse selection recovered" — in
+`--signal`. A recapture is the mechanism succeeding, which is what `--signal` means here, so
+the app matches the page it is meant to match and the third slot stays unspent.
+
+Do not reach for `--claw` for warnings, errors, or emphasis. Failure is encoded by
+*promotion* — `--muted` to `--ink` — because on a near-black ground that is the loudest move
+the palette has: `--ink` is 16.2:1 where `--claw` is only 6.3:1.
 
 ## Type
 

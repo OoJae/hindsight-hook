@@ -1,0 +1,757 @@
+/* ============================================================================
+   Hindsight — the app, in working clothes
+   ----------------------------------------------------------------------------
+   Four tool routes (/swap /lp /toxicity /explorer) that used to ship their own
+   design system inside a <style dangerouslySetInnerHTML>. That block was
+   injected after globals.css, so it also shadowed the brand's body rule and
+   took Newsreader, --ground and --ink off these pages entirely. It is gone;
+   this file replaces it, selector for selector, in the tokens.
+
+   Nothing is imported here. globals.css is loaded by the root layout, so every
+   token, every utility (.display .label .num .mono .keep-case .dim .sig .skip
+   a.u code.mono), the grain layer, the focus ring and the reduced-motion block
+   are already live on these routes.
+
+   The app is an instrument, not a poster: denser type, tighter padding, smaller
+   headings, and no entrance choreography. Same brand, quieter register — the
+   marketing site declaims, the tool reports.
+   ========================================================================= */
+
+/* Everything is scoped under .appheader / .appmain, the two elements the app
+   layout puts on the page. .card, .row and .muted are generic enough names that
+   an unscoped rule would be a landmine if this sheet ever gets hoisted into a
+   shared chunk; and the extra specificity means the sheet reliably wins over
+   globals' element rules without a single !important. */
+
+.appheader,
+.appmain {
+  /* The product column. The old chrome hardcoded 860px, tuned against 15px
+     system sans; site.css line 1 blesses the idea ("the product's 860px column
+     lives in (app)") but not the number. Two things moved since. The body face
+     is now Newsreader at var(--t-body) with line-height 1.65 — ~13% larger and
+     considerably looser — and every figure that matters is moving to mono,
+     which is wider still at equal size. The same *measure* now costs more
+     pixels: 860 would put /explorer's two-up columns at 400px and clip /lp's
+     six mono columns outright.
+
+     So: keep the column, widen it, and state it as a token. Full-bleed was
+     considered and rejected. The landing page is full-bleed because a ledger
+     that scrolls wants the whole sheet; a form does not — controls that run to
+     1600px stop reading as one instrument. Prose inside is capped separately at
+     its own measure, so widening the frame does not widen the reading line. */
+  --app-col: 68rem;
+}
+
+/* ---- chrome -------------------------------------------------------------
+   A sibling of .siteheader, not a copy of it. The site header is fixed over a
+   100svh hero with a three-stop scrim; over a dense control column that would
+   float on top of the inputs the moment you scrolled. This one is static and
+   sits on solid ground, closed with a single hairline, at the height the
+   ledger's sticky stamp already assumes: clamp(3.75rem, 6vw, 4.75rem).
+
+   Everything else is the site bar verbatim — the real .lockup, the real Glyph,
+   mono/uppercase nav at 0.08em (the header's tracking, one notch tighter than
+   .label's 0.1em), a.u for the underline, and exactly one --signal item.
+   ------------------------------------------------------------------------ */
+
+.appheader {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: clamp(0.85rem, 2vw, 1.75rem);
+  row-gap: 0.6rem;
+  min-height: clamp(3.75rem, 6vw, 4.75rem);
+  padding-block: clamp(0.75rem, 1.6vw, 1.1rem);
+  background: var(--ground);
+  border-bottom: var(--rule);
+
+  /* The header is full-bleed but its contents line up with the column beneath
+     it, so the lockup sits on the same left edge as the first heading and the
+     hairline runs the full width. Falls back to a plain gutter once the
+     viewport is narrower than the column. */
+  padding-inline: max(
+    var(--gutter),
+    calc((100% - var(--app-col)) / 2 + var(--gutter))
+  );
+}
+
+/* site.css is not loaded on these routes, so .lockup is redeclared here rather
+   than imported. It is the same rule, minus the margin-right: auto — on the
+   marketing bar the lockup pushes the nav to the far right; here the nav reads
+   directly after the wordmark and the status line takes the flush-right slot,
+   which is the shape the product chrome already had. */
+.appheader .lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-family: var(--display);
+  font-weight: 700;
+  font-stretch: 125%;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+  font-size: 0.95rem;
+  color: var(--ink);            /* warm paper. The old bar used #fff, which is
+                                   the one colour --ink is documented as not. */
+}
+
+.appheader nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: clamp(0.85rem, 2vw, 1.75rem);
+  margin-right: auto;
+  font-family: var(--mono);
+  font-size: var(--t-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  /* No font-weight and no colour: .siteheader nav sets neither, so it renders
+     Plex Mono 400 in --ink. Setting 500/--muted here made the bar visibly change
+     weight and colour in the one moment the two chromes are compared — clicking
+     "open the app" — and dropped the only navigation in the product to 4.1:1. */
+}
+
+/* The one signal item in the bar. On the marketing header that budget is spent
+   on the CTA into the app; in the app there is nowhere left to go, so it marks
+   where you are instead. */
+.appheader nav a[aria-current="page"] {
+  color: var(--signal);
+  text-decoration-color: var(--signal);
+}
+
+/* Same job as the site footer's mono strip, in the same voice. */
+.appheader .appstatus {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  /* The status line is context, not navigation; it goes first. */
+  .appheader .appstatus { display: none; }
+}
+
+/* ---- the column ---------------------------------------------------------- */
+
+.appmain {
+  max-width: var(--app-col);
+  margin-inline: auto;
+  padding: clamp(1.75rem, 3.5vw, 3rem) var(--gutter) clamp(4rem, 9vw, 7rem);
+}
+
+/* ---- headings -----------------------------------------------------------
+   The display face at three-quarters of the marketing scale. --t-section tops
+   out at 4.5rem, which is a page announcing itself; a tool states what it is
+   and gets on with it. Both headings are bare elements in the JSX, so the roles
+   are attached here rather than by adding .display .h-section in four files.
+   ------------------------------------------------------------------------ */
+
+.appmain h1,
+.appmain h2 {
+  font-family: var(--display);
+  font-weight: 700;
+  font-stretch: 125%;
+  text-transform: uppercase;
+  line-height: 1;
+  text-wrap: balance;
+}
+
+.appmain h1 {
+  font-size: clamp(1.85rem, 3.4vw, 2.9rem);
+  letter-spacing: -0.03em;
+  margin: 0 0 clamp(0.75rem, 1.6vw, 1.15rem);
+  max-width: 22ch;
+}
+
+/* /swap's h1 carries an <em>. Archivo is loaded with the width axis only, so
+   there is no true italic to set it in — a faux oblique on a 125%-stretched
+   uppercase display face is worse than no emphasis at all. The site's own
+   answer is .act-body strong: keep the weight and the style, change the
+   colour. "the fee is decided AFTER your trade" is the whole thesis, so the
+   accent is well spent here. */
+.appmain h1 em {
+  font-style: normal;
+  color: var(--signal);
+}
+
+/* A section heading is a rule with a word on it. This is what gives /swap and
+   /lp the ledger break they were missing between the ticket and the record. */
+.appmain h2 {
+  font-size: var(--t-sub);
+  letter-spacing: -0.015em;
+  margin: clamp(2.5rem, 5vw, 4rem) 0 clamp(0.75rem, 1.5vw, 1.1rem);
+  padding-top: clamp(1rem, 2vw, 1.5rem);
+  border-top: var(--rule);
+}
+
+/* ---- prose --------------------------------------------------------------- */
+
+.appmain p {
+  margin: 0 0 1rem;
+  max-width: 68ch;
+}
+
+/* The deck. Every one of the four routes opens with a <p className="muted">
+   that carries the page's actual argument, and the old sheet rendered it at
+   13px grey — the most important paragraph on each page set in the smallest
+   type on the page. Promote the first one to --ink and up the scale; the rest
+   stay secondary. Not .lede's 34ch: a tool's deck names a mechanism and needs
+   the extra measure. */
+.appmain > p.muted:first-of-type {
+  color: var(--ink);
+  font-size: clamp(1.05rem, 1.35vw, 1.25rem);
+  line-height: 1.5;
+  max-width: 58ch;
+}
+
+/* Colour, and nothing else. The old .muted did two unrelated jobs — it was the
+   secondary colour AND a shrink-to-13px — which is why the ledes, the quote
+   readouts and three card titles all came out as fine print. Size belongs to
+   an element's role. */
+.muted { color: var(--muted); }
+
+/* Emphasis is a change of colour at the same weight, never a bold run inside a
+   serif paragraph — site.css:190 takes <strong> back to 400 for exactly this
+   reason. Inside a muted paragraph, --muted → --ink is the loudest promotion
+   the palette has. */
+.appmain b,
+.appmain strong {
+  font-weight: 400;
+  color: var(--ink);
+}
+
+.appmain code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  /* Deliberately a bare `code` rule, not code.mono: the addresses on /swap and
+     /lp and the `backtest/compare.py` reference on /explorer are plain <code>
+     with no class, so globals' code.mono cannot reach them. A truncated hex
+     address is a mono artefact, not a badge — no fill, no radius, no padding. */
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  color: var(--ink);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* Discs and a 40px hanging indent are not in the vocabulary. /explorer's three
+   "things worth trying" are stamped imperatives; hairline-separated rows say
+   that, bullets don't. */
+.appmain ul {
+  list-style: none;
+  margin: clamp(0.75rem, 1.5vw, 1.1rem) 0 0;
+  padding: 0;
+}
+.appmain li {
+  border-top: var(--rule);
+  padding: 0.85rem 0;
+}
+.appmain li:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.appmain li:last-child { padding-bottom: 0; }
+
+/* ---- surfaces -----------------------------------------------------------
+   --ground-lift is documented as "one step up, for surfaces that must
+   separate", and a form genuinely must. Hairline, no radius: the whole system
+   has one radius and it is the 2px on the focus ring.
+   ------------------------------------------------------------------------ */
+
+.appmain .card {
+  background: var(--ground-lift);
+  border: var(--rule);
+  border-radius: 0;
+  padding: clamp(1rem, 2vw, 1.5rem);
+  margin: clamp(1rem, 2vw, 1.5rem) 0;
+}
+/* The trailing-margin collapse belongs here, once, not repeated inline on every
+   last paragraph. */
+.appmain .card > :first-child { margin-top: 0; }
+.appmain .card > :last-child { margin-bottom: 0; }
+
+/* Stacked cards are one ledger, not a pile of tiles: consecutive cards pull up
+   onto each other's rule so the seam between them is a single hairline. This
+   is what turns /swap's settlement list into a record instead of a feed. */
+.appmain .card + .card { margin-top: -1px; }
+
+/* The env guard and /explorer's loading state each return a lone .card as the
+   entire page. A notice is not a panel — when the card is all there is, drop
+   the fill and state it as a machine line between two rules, so a misconfigured
+   build still looks like this product. */
+.appmain > .card:only-child {
+  background: none;
+  border: 0;
+  border-block: var(--rule);
+  margin: 0;
+  padding: clamp(1.25rem, 2.5vw, 2rem) 0;
+  font-family: var(--mono);
+  font-size: var(--t-label);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+}
+
+/* No caption rule here. Captions are globals' .label on all four routes — one
+   mono uppercase 0.1em role — rather than a second lowercase 0.06em one that
+   only /explorer ever saw. */
+
+/* Secondary blocks inside a card are supporting prose, not fine print. */
+.appmain .card > .muted {
+  font-size: 0.95rem;
+  line-height: 1.55;
+  max-width: 62ch;
+}
+
+/* ---- rows ---------------------------------------------------------------- */
+
+.appmain .row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: clamp(0.6rem, 1.4vw, 1rem);
+}
+.appmain > .row { margin: clamp(1rem, 2vw, 1.5rem) 0; }
+
+/* A row of cards is a ledger strip, not a set of tiles. Kill the gutter and let
+   adjacent cards share one hairline — the same move .handoff-grid makes with a
+   1px gap over a --hairline ground. /lp's three-figure strip is the one place
+   this fires today; rows of controls are untouched. */
+/* Seamed the way .handoff-grid seams (site.css): a 1px gap over a --hairline
+   ground, with the cards' own borders removed. The negative-margin version this
+   replaces assumed flex — /lp overrides the strip to grid, where a -1px pull
+   overhangs the column edge at every wrap point and doubles the rule. */
+.appmain .row:has(> .card) {
+  gap: 1px;
+  align-items: stretch;
+  background: var(--hairline);
+  border: var(--rule);
+}
+.appmain .row:has(> .card) > .card { margin: 0; border: 0; }
+
+/* The only <b> that sits last in a .row is /explorer's slider readout, and it
+   re-renders on every drag frame. In a proportional face the digits shuffle
+   sideways under the user's thumb; tabular mono pins them. */
+.appmain .row > b:last-child {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+/* ---- controls -----------------------------------------------------------
+   A field on a form is a ruled line, not a box. The system is hairlines and
+   flat planes, and a boxed input inside a bordered card on a bordered page is
+   three nested rectangles saying the same thing. The rule under the field is
+   the field; it goes --signal when focused, which is also where globals'
+   :focus-visible ring lands.
+
+   Machine text is set in mono throughout: an address, an amount and a tick
+   count are all things the machine measured.
+   ------------------------------------------------------------------------ */
+
+.appmain input,
+.appmain select {
+  font-family: var(--mono);
+  font-size: 0.9375rem;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  /* --hairline is 1.2:1 on the card it sits in. That is right for a divider and
+     wrong for the only thing marking a control as editable, so the resting rule
+     is --muted (5.1:1) and hover promotes rather than introduces. */
+  border-bottom: 1px solid var(--muted);
+  border-radius: 0;
+  padding: 0.5rem 0;
+  transition: border-color 0.3s var(--ease-out);
+}
+.appmain input::placeholder { color: var(--muted); opacity: 1; }
+.appmain input:hover,
+.appmain select:hover { border-bottom-color: var(--ink); }
+.appmain input:focus,
+.appmain select:focus { border-bottom-color: var(--signal); }
+
+/* The native select's OS chrome cannot be flattened without appearance: none,
+   which also removes the indicator — so it is drawn back as a hairline chevron.
+   The stroke is --muted written out: a data: URI cannot read a custom property.
+   Keep it in sync with globals.css:16 if that token ever moves. */
+.appmain select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 1.4rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='6'%3E%3Cpath d='M1 1 L4.5 5 L8 1' fill='none' stroke='%236e7477' stroke-width='1.2' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0 center;
+}
+.appmain option { background: var(--ground); color: var(--ink); }
+
+/* A plotter's cursor on a hairline track. Stock range chrome is a rounded
+   saturated pill on a blue rail — the loudest off-brand object left on
+   /explorer once the cards go flat, and nothing in a class reskin reaches it.
+   Both vendor prefixes are required: a shared selector list is dropped whole by
+   whichever engine doesn't recognise its neighbour. */
+.appmain input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 1rem;
+  margin: 0.35rem 0 0.5rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.appmain input[type="range"]::-webkit-slider-runnable-track {
+  height: 1px;
+  background: var(--hairline);
+}
+.appmain input[type="range"]::-moz-range-track {
+  height: 1px;
+  background: var(--hairline);
+}
+/* No ::-moz-range-progress. There is no WebKit equivalent, so the filled rail
+   existed in Firefox only and the thumb is the position cue everywhere else.
+   One engine agreeing with itself beats two engines disagreeing. */
+.appmain input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 3px;
+  height: 16px;
+  border: 0;
+  border-radius: 0;
+  background: var(--signal);
+  margin-top: -7.5px;   /* centres the 16px tick on the 1px track */
+}
+.appmain input[type="range"]::-moz-range-thumb {
+  width: 3px;
+  height: 16px;
+  border: 0;
+  border-radius: 0;
+  background: var(--signal);
+}
+
+/* A button is a decision. The outline says the decision is available; the fill
+   says you are about to take it. No blue, no radius, no 15px sans — the label
+   is set the way every other stamped word in the system is set.
+
+   /explorer's σ toggle already encodes selection as "primary vs .ghost", so the
+   pair reads as a segmented control with no markup change: the live source is
+   outlined in signal, the other is a hairline. */
+.appmain button {
+  font-family: var(--mono);
+  font-size: var(--t-label);
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--signal);
+  background: transparent;
+  border: 1px solid var(--signal-dim);
+  border-radius: 0;
+  padding: 0.55rem 1.1rem;
+  cursor: pointer;
+  transition:
+    background 0.3s var(--ease-out),
+    color 0.3s var(--ease-out),
+    border-color 0.3s var(--ease-out);
+}
+.appmain button:hover:not(:disabled) {
+  background: var(--signal);
+  color: var(--ground);
+  border-color: var(--signal);
+}
+/* /swap nests a coloured verdict preview inside the Settle button's label; on a
+   signal fill both --signal and --ink would vanish. The label is one thing. */
+.appmain button:hover:not(:disabled) * { color: inherit; }
+
+/* Secondary is a quieter rule and a quieter label, not a grey fill. */
+.appmain button.ghost {
+  color: var(--muted);
+  border-color: var(--hairline);
+}
+.appmain button.ghost:hover:not(:disabled) {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--muted);
+}
+
+/* A stated resting state, not a dim. opacity: .45 reads as broken, and on
+   /explorer the disabled button says "= deployed hook" — it means you are
+   looking at the shipped configuration, which is information, not a fault. */
+.appmain button:disabled {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--hairline);
+  border-style: dashed;
+  cursor: default;
+}
+
+/* ---- tables -------------------------------------------------------------
+   evidence.css's .tbl, applied to the bare elements the pages actually use.
+   ------------------------------------------------------------------------ */
+
+.appmain table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+.appmain th {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: var(--t-label);
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0 1rem 0.6rem 0;
+  border-bottom: var(--rule);
+  white-space: nowrap;
+}
+.appmain td {
+  padding: 0.6rem 1rem 0.6rem 0;
+  border-bottom: var(--rule);
+  vertical-align: baseline;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+/* The card already draws the closing rule. */
+.appmain tr:last-child td { border-bottom: 0; }
+
+/* Six mono columns are wider than a phone. Wide content scrolls inside its own
+   container — the page body must never scroll sideways — and the card is the
+   container it already has. The floor keeps the columns from crushing before
+   the scroll engages; only /lp's table has a <th>, so /toxicity's and
+   /explorer's key/value tables stay fluid. */
+.appmain .card:has(> table) { overflow-x: auto; overscroll-behavior-x: contain; }
+.appmain table:has(th) { min-width: 32rem; }
+
+/* The route stamp. Every (site) band opens with a mono label over its heading
+   (see mechanism/page.js and evidence/page.js); the app routes now open the same
+   way, so the two chromes share one head grammar instead of four. */
+.appmain > .label:first-child { margin-bottom: 0.6rem; }
+
+/* A withheld value is not a figure and must not be set like one: an em dash in
+   the display face at 40px is a solid bar, not a placeholder. Mono, at the size
+   the landing hero withholds its own verdict at. */
+.appmain .big.warn {
+  font-family: var(--mono);
+  font-weight: 400;
+  font-stretch: normal;
+  font-size: clamp(1.1rem, 1.7vw, 1.5rem);
+  letter-spacing: 0;
+}
+
+/* The live flashblock clock, at exactly the size the landing hero sets its own
+   clock (site.css .verdict-clock). It was set inline to --t-sub, which is the
+   section-heading step — a counter reading louder than the deck beneath the h1,
+   and louder than the same clock on the page this one is supposed to match. */
+.appmain .clock { font-size: clamp(1.1rem, 1.7vw, 1.5rem); }
+
+/* ---- figures ------------------------------------------------------------- */
+
+/* evidence.css's .fig, one step down. Three of these sit side by side in /lp's
+   strip, and formatUnits(x, 18) can hand them a nineteen-character fraction —
+   hence the wrap. (That is a presentation bug the pages still owe; tabular
+   figures align digits, they do not shorten them.) */
+.appmain .big {
+  font-family: var(--display);
+  font-weight: 700;
+  font-stretch: 125%;
+  font-size: clamp(1.7rem, 3.1vw, 2.5rem);
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  overflow-wrap: anywhere;
+  margin: 0.3rem 0 0.4rem;
+}
+
+/* ============================================================================
+   ok / bad / warn — the verdict axis
+   ----------------------------------------------------------------------------
+   The old sheet shipped a traffic light: #4ade80 / #f87171 / #facc15. That is
+   three decorative colours in a system with one accent, and it conflated two
+   different axes — "the mechanism reached a verdict" and "the interface
+   failed".
+
+   Split them. Colour is reserved for mechanism verdicts. Interface failure is
+   encoded by promotion and structure, never by hue:
+
+     ok      → --signal   settled, refunded, benign, retained
+     warn    → --muted    the window is open, a tx is in flight
+     bad     → --ink      the loudest neutral the palette has
+     forfeit → --claw     confiscation, and only confiscation
+
+   Two of those want defending.
+
+   `warn` is not a warning. A pending settlement window is the mechanism's
+   defining state — the verdict is withheld, exactly as the landing page's hero
+   withholds it. --muted is what the hero uses before it settles.
+
+   `bad` is --ink, not --claw, and the reason is measurement rather than taste.
+   Against --ground: --ink is 16.2:1, --signal 16.6:1, --claw 6.3:1, --muted
+   4.1:1. --claw is the second-dimmest colour in the palette. Painting failures
+   orange would not make them louder — it would make them quieter than the body
+   text they sit in, while spending the brand's scarcest asset. On a near-black
+   ground with muted-grey secondary text, promoting a run from --muted to --ink
+   IS the loudest move available, and the site already uses precisely that move
+   for emphasis (.act-body strong, .tbl .is-shipped td). evidence.css settled
+   this question on its own table years before the app existed: .tbl .neg is
+   --muted, not red.
+
+   The claw budget. globals.css:22-24 spends --claw three times on the whole
+   site, and an audit finds exactly one live use — .retractions strong, the
+   retracted claim. Two slots are open, and both name things only this app can
+   produce. The app claims both, and no more:
+
+     slot 2  the forfeit verdict  → .forfeit, on the SETTLED verdict only
+
+   There is no slot 3. The clawback figure was going to take it, until a look at
+   the marketing site showed evidence.css already paints that exact figure — ρ,
+   "53.8% of realized adverse selection recovered" — in --signal, via .fig. A
+   recapture is the mechanism succeeding, which is what --signal means here.
+   Painting it --claw in the app would have contradicted the page it is meant to
+   match. So the clawback figure is .ok, and --claw is spent on confiscation and
+   the site's retracted claim: two uses, under budget.
+
+   "Three uses" means three named places in the design system, not three DOM
+   nodes: a swap ticket that shows a forfeited amount is one use whether the
+   user swaps once or twenty times — the component is the unit. What it does
+   NOT license is a row state. Forty orange rows in /lp's settlements table
+   would turn the event into a palette, and the one thing this product exists to
+   say — confiscation happened — would stop registering.
+
+   The discrepancy is worth flagging to a human rather than resolving in code:
+   globals.css:22-24 and BRAND.md:39-41 enumerate different sets of three, and
+   BRAND.md's "forfeited segment of the ribbon" names a component the same
+   document records as deleted.
+   ========================================================================= */
+
+.appmain .ok,
+.appmain .bad {
+  /* Both wrap machine output — bps, percentages, tick counts, verdict stamps —
+     so both are mono and tabular regardless of which way the verdict went. */
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: -0.01em;
+}
+
+.appmain .ok { color: var(--signal); }
+.appmain .bad { color: var(--ink); }
+.appmain .warn { color: var(--muted); }
+
+/* Slot 2. The SETTLED forfeit verdict, and nothing else: not a projection of one
+   inside a button, and never a per-row state. Forty orange cells down a table
+   column would turn the event back into a palette, which is the whole thing the
+   three-uses rule exists to prevent. */
+.appmain .forfeit { color: var(--claw); }
+
+/* No slot 3 — see the note above. The clawback figure is .ok, which resolves to
+   --signal and matches evidence.css's .fig, where that same number already lives.
+   A .big.ok rule used to sit here binding --claw, which silently redefined .ok to
+   mean orange on any large figure; two pages had grown workarounds around it. */
+
+/* A failure that is genuinely an interface failure, not a verdict: promoted to
+   --ink, struck where it is a figure, and given a 2px inset rule — a torn edge
+   in a field of 1px hairlines. Four independent channels, none of them hue, so
+   it survives greyscale and colour-vision deficiency alike. */
+.appmain .is-failed { box-shadow: inset 2px 0 0 var(--ink); }
+.appmain .is-failed td,
+.appmain .is-failed .num { color: var(--ink); }
+.appmain .is-failed .num {
+  text-decoration: line-through;
+  text-decoration-color: var(--muted);
+}
+
+/* /swap writes five different outcomes into one .warn paragraph — swap sent,
+   faucet minted, and three separate error paths — distinguished only by an
+   "error: " prefix inside the string. Until that becomes a real status value,
+   set the channel as what it is: a machine log line, filed against a rule.
+   Add .is-err to promote one to --ink. */
+/* Collapsed, not unmounted and not visibility:hidden — both would take the live
+   region out of the accessibility tree, which is the thing it exists to be in. */
+.appmain p.warn.is-empty {
+  height: 0;
+  margin: 0;
+  padding: 0;
+  border-left-color: transparent;
+  overflow: hidden;
+}
+
+.appmain p.warn {
+  font-family: var(--mono);
+  font-size: var(--t-label);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+  border-left: 2px solid var(--hairline);
+  padding-left: 0.75rem;
+  margin-top: clamp(0.75rem, 1.5vw, 1rem);
+}
+.appmain p.warn.is-err {
+  color: var(--ink);
+  border-left-color: var(--ink);
+}
+
+/* ---- the settlement bar -------------------------------------------------
+   site.css:140-158, at the same 2px. The old bar was 8px tall with a 4px radius
+   and a blue fill animating `width` — three violations in one rule.
+
+   The inner element still carries an inline width percentage set from JSX, and
+   an inline style beats a stylesheet, so today this renders as a set width that
+   steps on each poll rather than a continuous fill. That is the honest result:
+   `width` is a layout-thrashing property and the house rule is transform and
+   opacity only, so there is no transition on it to restore. The moment /swap
+   swaps `style={{ width: pct + "%" }}` for
+   `style={{ transform: "scaleX(" + pct / 100 + ")" }}`, the transition below
+   takes over with no further CSS work.
+   ------------------------------------------------------------------------ */
+
+.appmain .bar {
+  height: 2px;
+  background: var(--hairline);
+  border-radius: 0;
+  overflow: hidden;
+  margin-top: clamp(0.75rem, 1.5vw, 1rem);
+}
+.appmain .bar > * {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: var(--signal);
+  transform-origin: 0 50%;
+  transition: transform 1.6s var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .appmain .bar > * { transition: none; }
+}
+
+/* ---- motion -------------------------------------------------------------
+   There is none on mount, and that is a decision rather than an omission.
+
+   .rv and .fade default to opacity: 0 and only resolve when something stamps
+   [data-shown] — and the only thing that does is the Motion observer, which the
+   site layout mounts and this one does not. Putting either class on an app page
+   without mounting it is a blank-page bug, not a missing animation.
+
+   Mounting it was considered and rejected. /lp calls location.reload() every 20
+   seconds, so any entrance would re-fire on that cadence and read as a tic; and
+   a masked line-rise over a live table of client-rendered rows reads as jank,
+   not as craft. /explorer recomputes 55,822 rows synchronously on every drag
+   frame, which is not a frame budget to spend on decoration.
+
+   So the app's motion is entirely reactive: hover, focus, and state, all on
+   --ease-out, all on colour or transform. globals' reduced-motion block already
+   clamps every one of them.
+   ------------------------------------------------------------------------ */
+
+@media (max-width: 640px) {
+  /* Control rows stop being rows — a select, an amount and a submit crushed to
+     one line is not denser, only smaller. */
+  .appmain .row:not(:has(> .card)) > input,
+  .appmain .row:not(:has(> .card)) > select { width: 100%; }
+  .appmain .row:has(> .card) { flex-wrap: wrap; }
+  .appmain .row:has(> .card) > .card + .card { margin-left: 0; margin-top: -1px; }
+}
