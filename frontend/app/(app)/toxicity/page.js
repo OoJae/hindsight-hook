@@ -9,9 +9,12 @@ export default function ToxicityPage() {
   const [result, setResult] = useState(null);
 
   const lookup = async () => {
+    // Reputation is keyed PER POOL — round 3 finding F. Passing only the address
+    // (as this did) does not just read the wrong slot, it reverts: the generated
+    // getter for `mapping(PoolId => mapping(address => …))` takes two arguments.
     const [score, benign, quote] = await Promise.all([
-      pub.readContract({ address: HOOK, abi: hookAbi, functionName: "toxicityScore", args: [addr] }),
-      pub.readContract({ address: HOOK, abi: hookAbi, functionName: "benignSettles", args: [addr] }),
+      pub.readContract({ address: HOOK, abi: hookAbi, functionName: "toxicityScore", args: [POOL_ID, addr] }),
+      pub.readContract({ address: HOOK, abi: hookAbi, functionName: "benignSettles", args: [POOL_ID, addr] }),
       pub.readContract({ address: HOOK, abi: hookAbi, functionName: "previewBond", args: [POOL_ID, addr, parseUnits("1", 18)] }),
     ]);
     setResult({ score, benign, quote });

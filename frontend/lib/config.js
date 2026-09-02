@@ -66,8 +66,8 @@ export const hookAbi = [
     ],
   },
   { type: "function", name: "settle", stateMutability: "nonpayable", inputs: [{ type: "uint256" }], outputs: [] },
-  { type: "function", name: "toxicityScore", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },
-  { type: "function", name: "benignSettles", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint32" }] },
+  { type: "function", name: "toxicityScore", stateMutability: "view", inputs: [{ type: "bytes32" }, { type: "address" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "benignSettles", stateMutability: "view", inputs: [{ type: "bytes32" }, { type: "address" }], outputs: [{ type: "uint32" }] },
   {
     type: "event", name: "Settled",
     inputs: [
