@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hindsight — UHI10 deck</title>
+<meta name="description" content="A Uniswap v4 hook that prices flow from what the price actually did. Benign swaps pay the headline fee; informed flow pays for the harm it caused.">
+<link rel="icon" href="../icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..700&family=Newsreader:ital,opsz,wght@0,6..72,300..500;1,6..72,300..500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ground:#0b0d0e; --lift:#121517; --ink:#edeae4; --muted:#82888b; --hairline:#22262a;
+  --signal:#ccff00; --signal-dim:#7f9e12; --claw:#ff5a36;
+  /* system faces close the Greek gap: none of the three webfonts ship θ ρ σ */
+  --display:"Archivo","Helvetica Neue",system-ui,sans-serif;
+  --body:"Newsreader",Georgia,serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:#000;color:var(--ink);font-family:var(--body);-webkit-font-smoothing:antialiased;overflow:hidden}
+
+#stage{position:fixed;inset:0;display:grid;place-items:center}
+.slide{
+  position:absolute;width:1280px;height:720px;background:var(--ground);
+  padding:72px 84px;display:none;flex-direction:column;overflow:hidden;
+}
+.slide.on{display:flex}
+.slide::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:.04;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+.display{font-family:var(--display);font-weight:700;font-stretch:125%;text-transform:uppercase;
+  letter-spacing:-.035em;line-height:.94}
+h1{font-size:72px} h2{font-size:52px} h3{font-size:30px}
+.label{font-family:var(--mono);font-weight:500;font-size:13px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--muted);font-feature-settings:"tnum" 1}
+.keep{text-transform:none}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.sig{color:var(--signal)} .claw{color:var(--claw)} .dim{color:var(--muted)}
+p{font-size:21px;line-height:1.5;color:var(--muted);max-width:62ch}
+p b,p strong{color:var(--ink);font-weight:400}
+.big{font-size:26px;line-height:1.45;color:var(--ink);max-width:52ch}
+.head{margin-bottom:34px}
+.head .label{margin-bottom:14px}
+.mid{flex:1;display:flex;flex-direction:column;justify-content:center}
+.rule{height:1px;background:var(--hairline);margin:26px 0}
+.foot{position:absolute;left:84px;right:84px;bottom:40px;display:flex;justify-content:space-between;align-items:baseline}
+
+.grid{display:grid;gap:1px;background:var(--hairline);border:1px solid var(--hairline)}
+.cell{background:var(--ground);padding:26px 24px}
+.cell .n{font-family:var(--mono);font-size:32px;color:var(--hairline);line-height:1}
+.cell h3{margin:18px 0 10px}
+.cell p{font-size:16px;line-height:1.45;max-width:none}
+
+.fig{font-family:var(--display);font-weight:700;font-stretch:125%;letter-spacing:-.04em;
+  line-height:1;font-variant-numeric:tabular-nums;font-size:76px}
+.unit{font-size:.34em;margin-left:.16em;color:var(--signal-dim)}
+
+table{width:100%;border-collapse:collapse;font-size:17px}
+th{font-family:var(--mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);font-weight:500;text-align:left;padding:0 14px 10px 0;border-bottom:1px solid var(--hairline)}
+td{padding:11px 14px 11px 0;border-bottom:1px solid var(--hairline);font-variant-numeric:tabular-nums}
+tr.mark td{color:var(--ink)} tr.mark .label{color:var(--signal)}
+td.n{font-family:var(--mono)}
+
+.was{display:grid;grid-template-columns:1fr 1.25fr;gap:0 44px;padding:16px 0;border-top:1px solid var(--hairline)}
+.was .label{margin-bottom:8px}
+.was p{font-size:16px;max-width:none}
+
+.lane{position:relative;height:2px;background:var(--hairline);margin:78px 0 64px}
+.win{position:absolute;top:-30px;height:62px;border:1px dashed var(--muted)}
+.win.now{border:1px solid var(--signal-dim);border-style:solid}
+.dot{position:absolute;top:-9px;width:20px;height:20px;border-radius:50%;background:var(--signal);
+  box-shadow:0 0 0 8px var(--ground)}
+.tag{position:absolute;white-space:nowrap}
+
+#hud{position:fixed;right:22px;bottom:18px;z-index:10;font-family:var(--mono);font-size:12px;
+  letter-spacing:.1em;color:var(--muted)}
+#bar{position:fixed;left:0;top:0;height:2px;background:var(--signal);z-index:10;transition:width .25s ease}
+#hint{position:fixed;left:22px;bottom:18px;z-index:10;font-family:var(--mono);font-size:11px;
+  letter-spacing:.1em;color:var(--hairline)}
+
+@media print{
+  @page{size:1280px 720px;margin:0}
+  html,body{overflow:visible;background:#fff}
+  #stage{position:static;display:block}
+  .slide{display:flex!important;position:relative;page-break-after:always;transform:none!important}
+  #hud,#bar,#hint{display:none}
+}
+</style>
+</head>
+<body>
+
+<div id="bar"></div>
+<div id="stage">
+
+  <!-- 1 -->
+  <section class="slide">
+    <div class="mid">
+      <div class="label" style="margin-bottom:26px">Uniswap v4 hook · UHI10 · Sustainable Liquidity &amp; MEV Protection</div>
+      <h1 class="display">Hindsight</h1>
+      <h2 class="display dim" style="margin-top:16px">The fee is decided
+        <span class="sig">after</span> your trade.</h2>
+      <p class="big" style="margin-top:34px">Every swap posts a refundable bond. Fifteen seconds later the pool
+        checks what the price actually did. Benign flow gets it back. Informed flow pays for the harm it caused.</p>
+    </div>
+    <div class="foot"><span class="label">oojae.github.io/hindsight-hook</span><span class="label">Live · Unichain Sepolia + Base Sepolia</span></div>
+  </section>
+
+  <!-- 2 -->
+  <section class="slide">
+    <div class="head"><div class="label">The problem</div>
+      <h2 class="display">Liquidity providers lose to flow they cannot see</h2></div>
+    <div class="mid">
+      <p>CEX-DEX arbitrage takes the good side of every quote and liquidity providers wear the
+        difference. That is <b>loss-versus-rebalancing</b> — measured at <b>$233.8M over nineteen
+        months</b> on mainnet, roughly three quarters of it captured by three searchers.</p>
+      <div class="rule"></div>
+      <p>It is the largest unsolved cost of providing liquidity onchain, and it is not a bug in any
+        one pool. It is what happens when a price is quoted to someone who knows more than the
+        quote does.</p>
+    </div>
+    <div class="foot"><span class="label">02</span><span class="label">Hindsight</span></div>
+  </section>
+
+  <!-- 3 -->
+  <section class="slide">
+    <div class="head"><div class="label">Why the existing defenses do not close it</div>
+      <h2 class="display">Every one of them guesses</h2></div>
+    <div class="mid">
+      <div class="was"><div><div class="label">A static fee</div></div>
+        <p>Charges retail and arbitrage the same number. Raise it and you throttle the flow you want;
+          lower it and you subsidise the flow you don't.</p></div>
+      <div class="was"><div><div class="label">A dynamic fee</div></div>
+        <p>Reads volatility — but volatility is not intent. It cannot tell a retail swap from a bot,
+          so it punishes everyone in the same conditions equally.</p></div>
+      <div class="was"><div><div class="label">A priority-fee / MEV tax</div></div>
+        <p>Prices the <em>intent to be first</em>. On a fast rollup searchers stop bidding for
+          priority and spam cheap reverting probes instead — and a reverted probe pays zero.</p></div>
+      <div class="rule"></div>
+      <p><b>All three price flow before they can possibly know what it was.</b></p>
+    </div>
+    <div class="foot"><span class="label">03</span><span class="label">Hindsight</span></div>
+  </section>
+
+  <!-- 4 -->
+  <section class="slide">
+    <div class="mid">
+      <div class="label" style="margin-bottom:22px">The turn</div>
+      <h2 class="display">The one signal that cannot be faked is what the price actually did</h2>
+      <p class="big" style="margin-top:30px">Markout — the distance the price kept travelling in your
+        direction after you left — cannot be spoofed, cannot be revert-spammed, and does not need to
+        be predicted. It only needs to be <b>measured</b>, which means waiting.</p>
+      <div class="rule"></div>
+      <p>So Hindsight waits. The trade executes immediately; the <em>price</em> of that trade is
+        settled fifteen seconds later from evidence that did not exist when it landed.</p>
+    </div>
+    <div class="foot"><span class="label">04</span><span class="label">Hindsight</span></div>
+  </section>
+
+  <!-- 5 -->
+  <section class="slide">
+    <div class="head"><div class="label">Stamped in 200ms flashblocks</div>
+      <h2 class="display">How a swap becomes a verdict</h2></div>
+    <div class="mid">
+      <div class="grid" style="grid-template-columns:repeat(4,1fr)">
+        <div class="cell"><div class="n">01</div><div class="label" style="margin-top:14px">+00·000</div>
+          <h3 class="display">The bond is held</h3>
+          <p><b>25 bps</b> of your output, kept inside the pool as an ERC-6909 claim. No transfer, no
+            approval, no second transaction.</p></div>
+        <div class="cell"><div class="n">02</div><div class="label" style="margin-top:14px">+50·000</div>
+          <h3 class="display">Maturity</h3>
+          <p>50 flashblocks — <b>10 seconds</b> — while the market shows what the trade really did.</p></div>
+        <div class="cell"><div class="n">03</div><div class="label" style="margin-top:14px">+75·000</div>
+          <h3 class="display">The window closes</h3>
+          <p>A <b>5 second</b> reading. Then <b>anyone</b> can call <span class="num">settle()</span> —
+            the verdict is a pure read of the past, so there is nothing left to sandwich.</p></div>
+        <div class="cell"><div class="n">04</div><div class="label" style="margin-top:14px">settle</div>
+          <h3 class="display">The pool looks back</h3>
+          <p>Below <span class="keep">θ</span> → <span class="sig">refunded in full</span>. Above →
+            forfeit in proportion, dripped to the in-range LPs who wore the harm.</p></div>
+      </div>
+      <p style="margin-top:26px">A reverted transaction never lands, never posts a bond, and never
+        enters the measurement — so revert-spam is structurally irrelevant rather than defended against.</p>
+    </div>
+    <div class="foot"><span class="label">05</span><span class="label">Hindsight</span></div>
+  </section>
+
+  <!-- 6 -->
+  <section class="slide">
+    <div class="head"><div class="label">The threshold</div>
+      <h2 class="display"><span class="keep sig">θ</span> is measured before you arrive</h2></div>
+    <div class="mid">
+      <div class="lane">
+        <div class="win" style="left:0;width:44%"></div>
+        <div class="tag label" style="left:0;top:-62px">120s of realized volatility — a window that had already closed</div>
+        <div class="dot" style="left:50%"></div>
+        <div class="tag label sig" style="left:47%;top:-62px">your swap lands</div>
+        <div class="win now" style="left:56%;width:34%"></div>
+        <div class="tag label" style="left:56%;top:48px">markout measured here</div>
+      </div>
+      <p><b>θ scales with volatility</b>, so a violent tape does not confiscate honest flow — and it is
+        computed from the two minutes <em>before</em> your swap landed, then frozen into the swap
+        record at execution. <b>You cannot move the bar you are judged against.</b></p>
+      <p style="margin-top:16px">We did not get this right first time. Through v6, θ shared a window
+        with the markout it judged: on the real tape <b>927 swaps</b> were acquitted by their own
+        companion prints. Under a window that closes before the trade lands that number is
+        <b>zero</b> — asserted as an equality, not a bound.</p>
+    </div>
+    <div class="foot"><span class="label">06</span><span class="label">Hindsight</span></div>
+  </section>
+
+  <!-- 7 -->
+  <section class="slide">
+    <div class="head"><div class="label">55,822 real Unichain mainnet ETH/USDC swaps · re-priced through the exact on-chain logic</div>
+      <h2 class="display">Measured on flow that actually happened</h2></div>
+    <div class="mid">
+      <div class="grid" style="grid-template-columns:1.15fr 1fr 1fr">
+        <div class="cell" style="padding:32px 26px"><div class="label" style="max-width:22ch">of realized adverse selection, recovered</div>
+          <div class="fig sig" style="margin-top:16px">53.8<span class="unit">%</span></div>
+          <div class="label" style="margin-top:12px">$2,688 of $5,002</div></div>
+        <div class="cell" style="padding:32px 26px"><div class="label" style="max-width:22ch">benign flow — bond refunded in full</div>
+          <div class="fig" style="margin-top:16px">5.00<span class="unit">bps</span></div>
+          <div class="label" style="margin-top:12px">exactly the headline</div></div>
+        <div class="cell" style="padding:32px 26px"><div class="label" style="max-width:22ch">informed flow — fee plus forfeited bond</div>
+          <div class="fig" style="margin-top:16px">12.32<span class="unit">bps</span></div>
+          <div class="label" style="margin-top:12px">2.46× separation</div></div>
+      </div>
+      <p style="margin-top:26px">Same trades, re-priced. No simulated agents, no assumed behaviour. The
+        tape ships with the repo, so a clean clone reproduces every figure <b>offline, with no RPC</b>
+        — and the explorer re-prices all 55,822 in your browser under any parameters you choose.</p>
+    </div>
+    <div class="foot"><span class="label">07</span><span class="label">Hindsight</span></div>
+  </section>
+
+  <!-- 8 -->
+  <section class="slide">
+    <div class="head"><div class="label">Before any headline</div>
+      <h2 class="display">We publish the horizons that fail</h2></div>
+    <div class="mid">
+      <p style="margin-bottom:22px">Would random labels collect as much? Flipping a swap's direction
+        negates its markout, so we shuffle directions and re-run. At short horizons the mechanism
+        <b>does not beat chance</b> — the dominant signal there is a trade's own price impact, not
+        information. We ship the horizon where the signal is real and print the failures beside it.</p>
+      <table>
+        <thead><tr><th>Horizon</th><th>True clawback</th><th>Random-label mean</th><th>z</th></tr></thead>
+        <tbody>
+          <tr><td>1 + 1s</td><td class="n">$570</td><td class="n">$852</td><td class="n dim">−4.27</td></tr>
+          <tr><td>3 + 2s</td><td class="n">$1,239</td><td class="n">$1,270</td><td class="n dim">−0.42</td></tr>
+          <tr><td>5 + 2s</td><td class="n">$1,681</td><td class="n">$1,531</td><td class="n">+1.86</td></tr>
+          <tr class="mark"><td>10 + 5s <span class="label">shipped</span></td><td class="n">$2,688</td><td class="n">$2,186</td><td class="n sig">+6.14</td></tr>
+          <tr><td>30 + 10s</td><td class="n">$4,565</td><td class="n">$3,539</td><td class="n">+10.93</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="foot"><span class="label">08</span><span class="label">Hindsight</span></div>
+  </section>
+
+  <!-- 9 -->
+  <section class="slide">
+    <div class="head"><div class="label">Three adversarial audit rounds · every finding has a repro committed before its fix</div>
+      <h2 class="display">What we got wrong</h2></div>
+    <div class="mid">
+      <div class="was"><div><div class="label">Was — out-of-sample correlation 0.441</div>
+          <div class="label sig" style="margin-top:10px">Now — ≈ 0, published as a negative result</div></div>
+        <p>The label was anchored at the swap's own execution price, making it identically
+          <em>markout + later drift</em>. <span class="claw">91% of that number was the tautology the
+          test existed to rebut</span>, and a placebo tape with no predictability scored higher.</p></div>
+      <div class="was"><div><div class="label">Was — "0.0% of revenue from benign flow"</div>
+          <div class="label sig" style="margin-top:10px">Now — 5.6%, with the tautology labelled</div></div>
+        <p>A string literal. True by construction, because we defined benign as <em>the swaps we did
+          not charge</em>. Against an independent label the honest figure is <span class="claw">5.6%</span>,
+          against 14.4% for a flat fee.</p></div>
+      <div class="was"><div><div class="label">Was — "a JIT captures at most ~15% of the pot"</div>
+          <div class="label sig" style="margin-top:10px">Now — the bound is gone; residency replaces it</div></div>
+        <p>Our own test measured a <em>single</em> epoch and never repeated the snipe, which was the
+          entire attack. Repeated across twelve flushes a JIT took <span class="claw">98%</span>.
+          Liquidity must now sit 60s before withdrawal, so the snipe cannot be atomic.</p></div>
+      <p style="margin-top:20px"><b>A number you can check is worth more than a number that flatters us.</b>
+        All three retractions ship on the site, in place, beside their corrected figures.</p>
+    </div>
+    <div class="foot"><span class="label">09</span><span class="label">Hindsight</span></div>
+  </section>
+
+  <!-- 10 -->
+  <section class="slide">
+    <div class="head"><div class="label">The claim that survives</div>
+      <h2 class="display">It identifies flow, not prices</h2></div>
+    <div class="mid">
+      <p style="margin-bottom:24px">Hindsight does not predict. What it claims is narrower and testable:
+        the charge identifies <b>the addresses that keep adversely selecting</b>. Charge measured on the
+        first half of the week, adverse selection measured on the second, joined per address.</p>
+      <div class="grid" style="grid-template-columns:1fr 1fr 1fr 1.3fr">
+        <div class="cell"><div class="label">Spearman</div><div class="num sig" style="font-size:34px;margin-top:10px">+0.739</div></div>
+        <div class="cell"><div class="label">Permutation</div><div class="num" style="font-size:34px;margin-top:10px">p = 0.0005</div></div>
+        <div class="cell"><div class="label">Separation</div><div class="num" style="font-size:34px;margin-top:10px">15×</div></div>
+        <div class="cell"><div class="label">Honest caveat</div>
+          <p style="margin-top:10px">Only <b>34 addresses</b> trade this pool in both halves. Small
+            sample, stated plainly wherever the figure appears.</p></div>
+      </div>
+      <p style="margin-top:24px">Addresses charged <b>most</b> in week one went on to impose
+        <b>6.43 bps</b> of adverse selection in week two. Those charged <b>least</b>: <b>0.43</b>.
+        Nothing in the first half observes the second.</p>
+    </div>
+    <div class="foot"><span class="label">10</span><span class="label">Hindsight</span></div>
+  </section>
+
+  <!-- 11 -->
+  <section class="slide">
+    <div class="head"><div class="label">Not a prototype</div>
+      <h2 class="display">Deployed, settling, and checkable</h2></div>
+    <div class="mid">
+      <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+        <div class="cell"><div class="label sig">Unichain Sepolia</div>
+          <h3 class="display" style="margin-top:14px">200ms flashblocks</h3>
+          <p>The hook on Uniswap's official FlashblockNumber contract. Settlement driven autonomously
+            by a <b>Reactive Network</b> RSC, ~45–60s after the swap, with no keeper of ours running.</p></div>
+        <div class="cell"><div class="label sig">Base Sepolia</div>
+          <h3 class="display" style="margin-top:14px">Fallback clock</h3>
+          <p>No flashblock contract at all — the <em>same bytecode</em> runs on
+            <span class="num">block.number × 10</span>, driven by a <b>Chainlink Automation</b> upkeep.</p></div>
+        <div class="cell"><div class="label sig">Reproducible</div>
+          <h3 class="display" style="margin-top:14px">133 tests</h3>
+          <p>Unit, integration, invariant and fork suites. Deployed bytecode verified
+            <b>byte-for-byte</b> against this source on both chains.</p></div>
+      </div>
+      <div class="rule"></div>
+      <p><b>Try it in two minutes:</b> a browser wallet, free test ETH from the Superchain faucet, then
+        <span class="num">/swap</span> → Mint demo tokens → Swap → wait ~15s → Settle. Your swap appears
+        in the public ledger at <span class="num">/lp</span> with its verdict and the markout it was judged on.</p>
+    </div>
+    <div class="foot"><span class="label">11</span><span class="label">Hindsight</span></div>
+  </section>
+
+  <!-- 12 -->
+  <section class="slide">
+    <div class="mid">
+      <h1 class="display">Hindsight</h1>
+      <h2 class="display dim" style="margin-top:14px">The fee is decided
+        <span class="sig">after</span> your trade.</h2>
+      <div class="grid" style="grid-template-columns:repeat(3,max-content);margin-top:48px;background:none;border:0;gap:0 64px">
+        <div style="background:none"><div class="label">Site</div><div class="num" style="font-size:19px;margin-top:8px">oojae.github.io/hindsight-hook</div></div>
+        <div style="background:none"><div class="label">Code</div><div class="num" style="font-size:19px;margin-top:8px">github.com/OoJae/hindsight-hook</div></div>
+        <div style="background:none"><div class="label">Hook</div><div class="num" style="font-size:19px;margin-top:8px">0xDecF9F…1aC4</div></div>
+      </div>
+      <p style="margin-top:40px">Built solo for UHI10. Every number on these slides regenerates from a
+        tape committed to the repo — <span class="num">cd backtest &amp;&amp; .venv/bin/python compare.py</span></p>
+    </div>
+    <div class="foot"><span class="label">12</span><span class="label sig">Thank you</span></div>
+  </section>
+
+</div>
+
+<div id="hud"><span id="i">1</span> / <span id="n">12</span></div>
+<div id="hint">← → or space · F fullscreen · P print to PDF</div>
+
+<script>
+(() => {
+  const slides = [...document.querySelectorAll(".slide")];
+  const hud = document.getElementById("i"), bar = document.getElementById("bar");
+  document.getElementById("n").textContent = slides.length;
+  let i = 0;
+
+  // Scale the fixed 1280x720 stage to whatever the window is, so the deck is
+  // pixel-identical on a laptop, a projector, and in print.
+  const fit = () => {
+    const s = Math.min(innerWidth / 1280, innerHeight / 720);
+    slides.forEach(el => { el.style.transform = `scale(${s})`; el.style.transformOrigin = "center"; });
+  };
+  const show = n => {
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach((el, k) => el.classList.toggle("on", k === i));
+    hud.textContent = i + 1;
+    bar.style.width = ((i + 1) / slides.length * 100) + "%";
+    location.hash = i + 1;
+  };
+  addEventListener("resize", fit);
+  addEventListener("keydown", e => {
+    if (["ArrowRight","ArrowDown"," ","PageDown","n"].includes(e.key)) { e.preventDefault(); show(i + 1); }
+    else if (["ArrowLeft","ArrowUp","PageUp","p"].includes(e.key) && e.key !== "p") { e.preventDefault(); show(i - 1); }
+    else if (e.key === "Home") show(0);
+    else if (e.key === "End") show(slides.length - 1);
+    else if (e.key.toLowerCase() === "f") document.documentElement.requestFullscreen?.();
+    else if (e.key.toLowerCase() === "p") window.print();
+  });
+  addEventListener("click", e => { if (!e.target.closest("a")) show(i + (e.clientX > innerWidth / 2 ? 1 : -1)); });
+  fit();
+  show(Math.max(0, (parseInt(location.hash.slice(1), 10) || 1) - 1));
+})();
+</script>
+</body>
+</html>
