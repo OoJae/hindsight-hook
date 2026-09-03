@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" role="img" aria-label="Hindsight">
+  <!-- The settlement window, drawn as a caliper held over a segment of tape.
+       Tested at 96/40/24/16px against two alternatives; this is the only one
+       where the bracket and the price stay distinguishable at favicon size. -->
+  <path d="M12 6 H27" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity=".6"/>
+  <path d="M12 6 V10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity=".6"/>
+  <path d="M27 6 V10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity=".6"/>
+  <!-- Flat before the trade, rising through the window, still higher when it
+       leaves the far edge. That exit is the thing being priced. -->
+  <path d="M2 25 H12 L21 14 H30" stroke="currentColor" stroke-width="2.6"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="12" cy="25" r="2.8" fill="currentColor"/>
+</svg>
